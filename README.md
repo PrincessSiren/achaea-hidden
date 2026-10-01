@@ -47,9 +47,9 @@ and is not written over.
   pattern is anchored at the start and not at the end, because other packages
   append their own text to lines they time.
 - **`CLEARQUEUE ALL`** is `HELP 4.6.1`.
-- **`DIAGNOSE`** is a Survival ability by `AB SURVIVAL`'s listing. Its own
-  `AB` file is not captured, so what it costs and whether it needs balance
-  are unknown.
+- **`DIAGNOSE`** is `AB SURVIVAL DIAGNOSE`: `DIAGNOSE/DIAG [ME]`, at a cost
+  of 1.00 seconds of equilibrium. The scroll does not say whether it needs
+  balance, so that is still unknown.
 
 ## If you run Orion
 
@@ -68,6 +68,10 @@ attack in it. In the capture the bite landed off balance, so `diagnose` would be
 the server and not run at once, and that `addclear` may take it out again. If
 the `[AchaeaHidden]` line prints and no diagnose follows, that is why.
 `hidden send` changes the commands without a rebuild.
+
+**Diagnosing costs a second of equilibrium.** That is a second in which
+nothing else that needs equilibrium can run, every time the line fires and
+the gap has passed.
 
 **`hidden` has not been typed in game** to check the game has no command of
 that name. An alias on a word the game uses would shadow it.
