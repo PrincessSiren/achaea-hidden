@@ -166,7 +166,8 @@ function M.onLine(text)
   -- commands: Mudlet's echo of a sent command starts a new line by itself when
   -- the last line is not empty (TConsole::printCommand), so a newline of ours
   -- on either side of the sends is a blank line. Sending first and echoing
-  -- "\n" after was seen to print one; this order has not been watched live.
+  -- "\n" after was seen to print one; this order was watched live and prints
+  -- none.
   cecho("\n<orange>[AchaeaHidden]<reset> hidden affliction: " ..
         table.concat(commands, ", "))
   for _, cmd in ipairs(commands) do send(cmd) end

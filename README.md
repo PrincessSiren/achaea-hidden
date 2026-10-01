@@ -52,6 +52,7 @@ and is not written over.
 
 - **The line** was captured from a vampire spider's bite: the attack, a
   `Health lost` line, then the line above and nothing naming an affliction.
+  A huge rat's claw prints the same line, so it is not one creature's.
   The harness carries those lines and fires the live trigger on them. The
   pattern is anchored at the start and not at the end, because other packages
   append their own text to lines they time.
@@ -123,9 +124,11 @@ command does not need. Only `full` was tried.
 
 ### Not seen
 
-- A bite that lands while you **have** balance. A queued command whose
-  condition is already met has been seen to run at once for `eb`, and `bal`
-  should do the same.
+- `queue add bal diagnose` arriving while you **have** balance. A queued
+  command whose condition is already met has been seen to run at once for
+  `eb`, and `bal` should do the same. One hit did land on balance, but the
+  hunting script's attack ran first and spent it, so the diagnose waited for
+  balance as usual.
 - Balance returning while equilibrium is still down. The diagnose would then
   be refused; in every bite on record equilibrium was up.
 - A hunting script that clears the balance queue too, or no hunting script.
