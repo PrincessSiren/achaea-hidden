@@ -35,6 +35,9 @@ Drag `AchaeaHidden.xml` into Mudlet, or build `AchaeaHidden.mpackage` with
 | `hidden gap <seconds>` | how long a repeat of the line is ignored for (2) |
 | `hidden diag` | build stamp, trigger count, where settings are saved |
 
+The game has no command called `hidden`: sent past the alias, it answers
+"I'm sorry, I don't know what "hidden" does." So the prefix shadows nothing.
+
 Settings are saved to `achaea-hidden.lua` in the profile directory. A file
 that cannot be read is renamed to `achaea-hidden.lua.bad` at the next save
 and is not written over.
@@ -72,9 +75,6 @@ the `[AchaeaHidden]` line prints and no diagnose follows, that is why.
 **Diagnosing costs a second of equilibrium.** That is a second in which
 nothing else that needs equilibrium can run, every time the line fires and
 the gap has passed.
-
-**`hidden` has not been typed in game** to check the game has no command of
-that name. An alias on a word the game uses would shadow it.
 
 ## Build and test
 
