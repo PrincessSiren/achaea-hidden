@@ -37,6 +37,10 @@ Drag `AchaeaHidden.xml` into Mudlet, or build `AchaeaHidden.mpackage` with
 | `hidden gap <seconds>` | how long a repeat of the line is ignored for (2) |
 | `hidden diag` | build stamp, trigger count, where settings are saved |
 
+A `send` you have set is saved and kept across upgrades, so a new default does
+not replace it. `hidden send clearqueue all;queue add bal diagnose` is the
+current default.
+
 The game has no command called `hidden`: sent past the alias, it answers
 "I'm sorry, I don't know what "hidden" does." So the prefix shadows nothing.
 
@@ -68,7 +72,8 @@ do not conflict.
 
 Five bites while hunting with Orion and Orifox, which clears and refills the
 `eb` queue with `queue addclear eqbal` on nearly every prompt. Each time the
-bite landed off balance, and each time:
+bite landed off balance, and each time (abridged: Mudlet's echo of the two
+commands and the prompts between are left out):
 
 ```
 You are confused as to the effects of the venom.
@@ -102,16 +107,16 @@ Four forms were tried against the same hunting setup.
 | --- | --- |
 | `diagnose` | Works, three bites in three, but only because the server queues a refused command itself. With `CONFIG USEQUEUEING OFF` it would simply be refused. |
 | `queue add eb diagnose` | Does not work. The game confirms "Added DIAGNOSE to your eb queue.", then the hunting script's `addclear eqbal` clears it with its own attack: three bites, no diagnosis. |
-| `queue add bal diagnose` | Works, five bites in five, and does not depend on that setting. This is the default. |
+| `queue add bal diagnose` | Works, five bites in five. Nothing is refused first, so it should not depend on that setting; it was not tried with the setting off. This is the default. |
 | `queue add full diagnose` | Did not run, one bite in one, during the fight or after it. The attack in `eb` takes the balance first each time, and `full` also waits on not being paralysed, which was the hidden affliction that bite. `QUEUE LIST` afterwards still showed it queued, with health, equilibrium and balance all up. |
 
 `ADDCLEAR` removes commands "of the specified queue type" (`HELP 4.6.1`), so
 an entry in the balance queue is out of reach of a script that owns `eb`.
 
 `DIAGNOSE` typed by hand runs while seated and while paralysed, and reports
-both. So the `free`, `freestand` and `full` queues wait on conditions the
-command does not need, and would hold a diagnosis back through the very
-affliction it could have named.
+both. By `HELP 4.6.1` the `free`, `freestand` and `full` queues wait on not
+being paralysed, and the last two on standing, so they wait on conditions the
+command does not need. Only `full` was tried.
 
 ### Not seen
 

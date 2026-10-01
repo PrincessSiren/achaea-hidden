@@ -41,7 +41,7 @@ script leaves alone, and runs when balance returns, ahead of the attack.
 AchaeaHidden = AchaeaHidden or {}
 local M = AchaeaHidden
 
-M.VERSION = "0.1.1"
+M.VERSION = "0.2.0"
 M.BUILD = M.BUILD or "source"   -- build.py replaces this
 
 -- Settings, and the only keys a saved file is allowed to bring back. Filtered
@@ -74,9 +74,9 @@ M.state = M.state or {
 }
 local S = M.state
 
--- The game's line. A prefix rather than the
--- whole line: Orion glues stopwatches onto the ends of lines it times, and an
--- end anchor against a line somebody else has appended to never fires.
+-- The game's line. A prefix rather than the whole line: Orion glues
+-- stopwatches onto the ends of lines it times, and an end anchor against a
+-- line somebody else has appended to never fires.
 M.LINE = "You are confused as to the effects of the venom."
 M.PATTERN = [[^You are confused as to the effects of the venom\.]]
 local function log(message, colour)
@@ -113,12 +113,19 @@ end
 function M.save()
   local path = M.path()
   if S.loaded == "unreadable" then
-    pcall(os.rename, path, path .. ".bad")
+    -- os.rename reports failure by returning nil, not by raising. If the file
+    -- could not be moved aside, writing now would destroy the only copy.
+    local ok, moved = pcall(os.rename, path, path .. ".bad")
+    if not (ok and moved) then
+      log("could not move " .. path .. " aside; settings not saved", "red")
+      return false
+    end
     S.loaded = "ok"
   end
   local out = {}
   for key in pairs(CONFIG_DEFAULTS) do out[key] = M.config[key] end
   pcall(table.save, path, out)
+  return true
 end
 
 -- --------------------------------------------------------------------- reflex
@@ -154,13 +161,14 @@ function M.onLine(text)
   if #commands == 0 then return false end
   S.last = now
   S.sent = S.sent + 1
-  -- The alert goes out before the commands. A trigger's echo lands on the line
-  -- that fired it, so it starts with a newline of its own; and Mudlet's echo
-  -- of a sent command adds one only when the last line is not empty
-  -- (TConsole::printCommand), so sending first and then adding ours printed a
-  -- blank line above the alert.
-  cecho("\n")
-  log("hidden affliction: " .. table.concat(commands, ", "))
+  -- A trigger's echo lands on the line that fired it, so the alert starts
+  -- with a newline of its own. It ends without one, and goes out before the
+  -- commands: Mudlet's echo of a sent command starts a new line by itself when
+  -- the last line is not empty (TConsole::printCommand), so a newline of ours
+  -- on either side of the sends is a blank line. Sending first and echoing
+  -- "\n" after was seen to print one; this order has not been watched live.
+  cecho("\n<orange>[AchaeaHidden]<reset> hidden affliction: " ..
+        table.concat(commands, ", "))
   for _, cmd in ipairs(commands) do send(cmd) end
   return true
 end

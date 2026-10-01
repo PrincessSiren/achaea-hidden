@@ -29,7 +29,12 @@ table.save = function(_, t)
   for key, value in pairs(t) do SAVED[key] = value end
 end
 local realRename = os.rename
-os.rename = function(from, to) RENAMED[#RENAMED + 1] = from .. " -> " .. to; return true end
+local RENAME_FAILS = false
+os.rename = function(from, to)
+  if RENAME_FAILS then return nil, "permission denied" end
+  RENAMED[#RENAMED + 1] = from .. " -> " .. to
+  return true
+end
 local seq = 0
 function tempRegexTrigger(re, fn)
   seq = seq + 1
@@ -63,6 +68,13 @@ local function pcreToLua(re)
 end
 
 local function load() assert(loadfile(HERE .. "/AchaeaHidden.lua"))() end
+
+-- ---- it installs switched on ----------------------------------------------
+load()
+assert(AchaeaHidden.CONFIG_DEFAULTS.enabled == true and AchaeaHidden.config.enabled == true,
+       "a fresh install acts on the line without being told to")
+AchaeaHidden.stop()
+AchaeaHidden = nil
 
 -- ---- a saved file comes back, filtered by name and type -------------------
 STORED = { enabled = false, send = "diagnose", gap = "soon", retired = true }
@@ -115,11 +127,15 @@ assert(#SENT == 2 and SENT[1] == "clearqueue all" and SENT[2] == "queue add bal 
 assert(not M.CONFIG_DEFAULTS.send:find("queue add eb", 1, true)
        and not M.CONFIG_DEFAULTS.send:find("eqbal", 1, true),
        "the default never queues under eb")
-assert(ECHOED[#ECHOED - 1] == "\n", "a trigger's echo starts a line of its own")
--- Mudlet's echo of a sent command ends the line by itself, so a newline of
--- ours after the sends is a blank line above the alert. Alert first.
-assert(table.concat(ORDER, " ") == "echo echo send send",
+-- Mudlet's echo of a sent command starts its own line when the last one is
+-- not empty, so a newline of ours next to the sends is a blank line. The
+-- alert opens with one, closes without one, and goes out first.
+local alert = ECHOED[#ECHOED]
+assert(alert:sub(1, 1) == "\n", "a trigger's echo starts a line of its own")
+assert(alert:sub(-1) ~= "\n", "and leaves the newline after it to the command echo")
+assert(table.concat(ORDER, " ") == "echo send send",
        "the alert is printed before anything is sent")
+assert(M.state.sent == 1 and M.state.seen == 1, "and it is counted once")
 
 -- Orion glues stopwatches onto line ends; a tail must not stop it.
 assert((M.LINE .. "[Venom] (1.00)"):find(pattern), "no end anchor")
@@ -171,6 +187,12 @@ assert(RENAMED[1] == "/profile/achaea-hidden.lua -> /profile/achaea-hidden.lua.b
        "the unreadable file is renamed before the save")
 M.setEnabled(true)
 assert(#RENAMED == 1, "and only once")
+-- A rename that fails must not be followed by a write over the same file.
+load()
+RENAME_FAILS, SAVED = true, nil
+assert(M.save() == false and SAVED == nil, "a file that cannot be moved aside is not written over")
+assert(M.state.loaded == "unreadable", "and it is tried again at the next save")
+RENAME_FAILS = false
 M.stop()
 os.rename = realRename
 

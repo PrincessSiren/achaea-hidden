@@ -3,7 +3,7 @@
 # Note what this does *not* cover: none of it runs inside Mudlet. The harness
 # stubs the client, so a green run means the pattern matches the captured
 # line, the right commands go out and the packaging holds - not that the
-# diagnose ever runs in a fight. See README.md, "Not yet seen working".
+# diagnose ever runs in a fight. See README.md, "What a live run shows".
 name: CI
 
 # Read-only: this workflow builds and checks, and never needs to write back.
