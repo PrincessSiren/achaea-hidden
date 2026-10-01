@@ -96,13 +96,14 @@ returns.
 
 ### Why the balance queue
 
-Three forms were tried in the same hunt.
+Four forms were tried against the same hunting setup.
 
 | sent | result |
 | --- | --- |
 | `diagnose` | Works, three bites in three, but only because the server queues a refused command itself. With `CONFIG USEQUEUEING OFF` it would simply be refused. |
 | `queue add eb diagnose` | Does not work. The game confirms "Added DIAGNOSE to your eb queue.", then the hunting script's `addclear eqbal` clears it with its own attack: three bites, no diagnosis. |
 | `queue add bal diagnose` | Works, five bites in five, and does not depend on that setting. This is the default. |
+| `queue add full diagnose` | Did not run, one bite in one, during the fight or after it. The attack in `eb` takes the balance first each time, and `full` also waits on not being paralysed, which was the hidden affliction that bite. |
 
 `ADDCLEAR` removes commands "of the specified queue type" (`HELP 4.6.1`), so
 an entry in the balance queue is out of reach of a script that owns `eb`.
