@@ -108,6 +108,11 @@ Four forms were tried against the same hunting setup.
 `ADDCLEAR` removes commands "of the specified queue type" (`HELP 4.6.1`), so
 an entry in the balance queue is out of reach of a script that owns `eb`.
 
+`DIAGNOSE` typed by hand runs while seated and while paralysed, and reports
+both. So the `free`, `freestand` and `full` queues wait on conditions the
+command does not need, and would hold a diagnosis back through the very
+affliction it could have named.
+
 ### Not seen
 
 - A bite that lands while you **have** balance. A queued command whose
