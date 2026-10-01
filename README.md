@@ -45,6 +45,7 @@ not replace it. `hidden send queue add bal diagnose` is the current default.
 `clearqueue all` was the first command in `send`, and a settings file saved by
 that version still holds it there; one found in `send` is dropped, so
 `hidden clear off` works on an upgraded install and `on` does not clear twice.
+`hidden send` says so when you type one into it.
 With it off, whatever was queued stays queued and the diagnose joins it. That
 has not been run in a live client.
 

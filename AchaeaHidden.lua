@@ -153,9 +153,12 @@ M.CLEAR = "clearqueue all"
 --- in it would be sent with the switch off, or twice with it on.
 function M.commands()
   local out = {}
+  S.dropped = false
   for cmd in (tostring(M.config.send or "") .. ";"):gmatch("(.-);") do
     cmd = cmd:match("^%s*(.-)%s*$")
-    if cmd ~= "" and cmd:lower():gsub("%s+", " ") ~= M.CLEAR then
+    if (cmd:lower():gsub("%s+", " ")) == M.CLEAR then
+      S.dropped = true
+    elseif cmd ~= "" then
       out[#out + 1] = cmd
     end
   end
@@ -224,7 +227,12 @@ function M.setSend(text)
   M.config.send = tostring(text or "")
   M.save()
   log(M.statusLine())
-  return M.commands()
+  local commands = M.commands()
+  -- Typed here it is dropped, which the status line shows only by omission.
+  if S.dropped then
+    log("a " .. M.CLEAR .. " in send is ignored; `hidden clear on|off` decides it")
+  end
+  return commands
 end
 
 function M.setGap(seconds)

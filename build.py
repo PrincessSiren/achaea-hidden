@@ -65,7 +65,7 @@ ALIASES: list[tuple[str, str, str, str, str]] = [
         r"^hidden\s+(on|off)$",
         'AchaeaHidden.setEnabled(matches[2] == "on")',
         "hidden on|off",
-        "clear the queue and diagnose on the venom line at all",
+        "act on the venom line at all",
     ),
     (
         "clear",

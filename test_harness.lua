@@ -76,6 +76,21 @@ assert(AchaeaHidden.CONFIG_DEFAULTS.enabled == true and AchaeaHidden.config.enab
 AchaeaHidden.stop()
 AchaeaHidden = nil
 
+-- ---- the file 0.2.0 saved: the clear inside `send`, and no `clear` key ----
+STORED = { enabled = true, send = "clearqueue all;queue add bal diagnose", gap = 2 }
+load()
+assert(AchaeaHidden.config.clear == true, "a file with no `clear` key clears, as it always did")
+local upgraded = AchaeaHidden.commands()
+assert(#upgraded == 2 and upgraded[1] == "clearqueue all" and upgraded[2] == "queue add bal diagnose",
+       "and sends what 0.2.0 sent, each command once")
+AchaeaHidden.stop()
+AchaeaHidden = nil
+STORED = { enabled = true, send = "queue add bal diagnose", gap = 2, clear = false }
+load()
+assert(AchaeaHidden.config.clear == false, "a saved off comes back off")
+AchaeaHidden.stop()
+AchaeaHidden = nil
+
 -- ---- a saved file comes back, filtered by name and type -------------------
 STORED = { enabled = false, send = "diagnose", gap = "soon", retired = true }
 load()
@@ -194,7 +209,9 @@ assert(M.onLine(M.LINE) == true and #SENT == 2
        "on, the same file clears once and not twice")
 clock = clock + 5
 SENT = {}
+ECHOED = {}
 M.setSend(" ClearQueue  ALL ; diagnose")
+assert(ECHOED[#ECHOED]:find("in send is ignored", 1, true), "typing one into send says it is dropped")
 assert(M.onLine(M.LINE) == true and #SENT == 2 and SENT[2] == "diagnose",
        "however it was typed")
 clock = clock + 5
@@ -202,7 +219,9 @@ SENT = {}
 M.setSend(";")
 assert(M.onLine(M.LINE) == false and #SENT == 0,
        "with nothing to send, the queue is not cleared for nothing")
+ECHOED = {}
 M.setSend(M.CONFIG_DEFAULTS.send)
+assert(not ECHOED[#ECHOED]:find("ignored", 1, true), "and a send without one says nothing of it")
 M.COMMANDS = { { usage = "hidden", help = "this list" } }
 M.report(); M.diag()
 
