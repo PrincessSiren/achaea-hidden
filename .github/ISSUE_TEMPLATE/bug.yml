@@ -1,0 +1,63 @@
+name: Something is wrong
+description: It did not diagnose, it diagnosed when it should not have, or anything else misbehaving.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The two most useful things you can put in this report are the output of
+        **`hidden diag`** and **the lines the game printed** around the moment
+        it went wrong, pasted exactly.
+
+  - type: textarea
+    id: diag
+    attributes:
+      label: "`hidden diag`"
+      description: >-
+        Paste the whole thing. The build stamp is the only reliable answer to
+        "is Mudlet running what I think it is" -- the version says what you
+        expect whether or not anything was rebuilt.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: lines
+    attributes:
+      label: What the game printed
+      description: >-
+        From the attack that gave the affliction to a few prompts after it,
+        including anything another package sent or echoed in between. If the
+        game worded the line differently from the one this package watches
+        for, this is what shows it.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: expected
+    attributes:
+      label: What should have happened?
+      options:
+        - The line printed and nothing was sent
+        - The commands were sent but no diagnose followed
+        - It sent commands on a line that was not the venom line
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: others
+    attributes:
+      label: Other combat or curing packages installed
+      description: Anything that manages the server-side queue matters here.
+    validations:
+      required: false
+
+  - type: input
+    id: mudlet
+    attributes:
+      label: Mudlet version
+      placeholder: "5.0.1"
+    validations:
+      required: true

@@ -1,0 +1,105 @@
+# Sanity checks for what can be checked outside Mudlet.
+#
+# Note what this does *not* cover: none of it runs inside Mudlet. The harness
+# stubs the client, so a green run means the pattern matches the captured
+# line, the right commands go out and the packaging holds - not that the
+# diagnose ever runs in a fight. See README.md, "Not yet seen working".
+name: CI
+
+# Read-only: this workflow builds and checks, and never needs to write back.
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Mudlet embeds Lua 5.1, and luajit is that exact dialect - a 5.4 parser
+      # would accept things Mudlet rejects.
+      - name: Install LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y luajit
+
+      - name: Lua syntax
+        run: luajit -e "assert(loadfile('AchaeaHidden.lua'))"
+
+      - name: Harness
+        run: luajit test_harness.lua
+
+      # The .xml is generated from the .lua and committed, and the .xml is what
+      # actually gets installed - so a .lua edited without a rebuild ships a
+      # package that does not match its source, invisibly, because the diff of
+      # the change itself looks fine. build.py is stdlib only, so the runner's
+      # own python will do.
+      - name: Package matches its .lua
+        run: |
+          python3 build.py
+          git diff --exit-code -- '*.xml' || {
+            echo "::error::AchaeaHidden.lua changed without a rebuild - run build.py and commit the .xml"
+            exit 1
+          }
+
+      # A build.py escaping bug survives the check above, since a malformed file
+      # matching an equally malformed commit still diffs clean.
+      - name: Generated XML parses
+        run: python3 -c "import xml.etree.ElementTree as ET; ET.parse('AchaeaHidden.xml'); print('ok')"
+
+      # The Mudlet package repository's validator greps config.lua for six
+      # fields and rejects the archive if any is missing. That check runs on
+      # their side, after a tag, on a pull request nobody here sees fail --
+      # so it runs here too, where it is cheap and attributable.
+      - name: The .mpackage carries what the registry requires
+        run: |
+          python3 build.py >/dev/null
+          python3 -c "
+          import zipfile, sys
+          cfg = zipfile.ZipFile('AchaeaHidden.mpackage').read('config.lua').decode()
+          missing = [f for f in ('mpackage','title','version','created','author','description')
+                     if f + ' =' not in cfg]
+          if missing:
+              sys.exit('config.lua is missing: ' + ', '.join(missing))
+          print('config.lua carries all six required fields')"
+
+      # Two builds a second apart must produce the same archive, or the digest
+      # a release publishes says nothing. This is easy to regress twice over:
+      # writestr with a plain filename takes the wall clock, and two builds
+      # inside one second hide it -- and deflate output depends on which zlib
+      # python is linked against, which only shows up across two machines. The
+      # digest below is worth comparing against a local build for that reason.
+      - name: The .mpackage is byte-reproducible
+        run: |
+          python3 build.py >/dev/null
+          a=$(sha256sum AchaeaHidden.mpackage | cut -d" " -f1)
+          sleep 2
+          python3 build.py >/dev/null
+          b=$(sha256sum AchaeaHidden.mpackage | cut -d" " -f1)
+          if [ "$a" != "$b" ]; then
+            echo "::error::two builds differ: $a vs $b"
+            exit 1
+          fi
+          echo "reproducible: $a"
+          python3 -c "
+          import zipfile, hashlib
+          z = zipfile.ZipFile('AchaeaHidden.mpackage')
+          for n in z.namelist():
+              print(f'  {n}: {hashlib.sha256(z.read(n)).hexdigest()}')" 
+
+      # build.py silently stamps 0.0.0 when it cannot find M.VERSION on a line
+      # it recognises, which is the failure mode of a version that moved and a
+      # build script that did not.
+      - name: Version is real
+        run: |
+          python3 -c "
+          import re, pathlib
+          src = pathlib.Path('AchaeaHidden.lua').read_text()
+          m = re.search(r'^M\.VERSION\s*=\s*\"([^\"]+)\"', src, re.M)
+          assert m, 'M.VERSION not found on a line build.py recognises'
+          assert m.group(1) != '0.0.0', 'version is the 0.0.0 fallback'
+          print('version', m.group(1))"

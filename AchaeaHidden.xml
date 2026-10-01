@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE MudletPackage>
+<MudletPackage version="1.001">
+    <ScriptPackage>
+        <Script isActive="yes" isFolder="no">
+            <name>AchaeaHidden</name>
+            <packageName>AchaeaHidden</packageName>
+            <script>--[[
+
+AchaeaHidden - diagnose when the game says an affliction landed unnamed.
+
+One line of game output, one reflex:
+
+  You are confused as to the effects of the venom.
+
+is all the game says when a venom gives you an affliction without telling you
+which. Nothing can be cured by name until it is known, so this clears the
+queue and diagnoses:
+
+  clearqueue all
+  diagnose
+
+`CLEARQUEUE ALL` is HELP 4.6.1. The line was captured from a vampire spider's
+bite; the harness carries the lines around it.
+
+It sends commands to the game unasked, which is the whole of what it does:
+what it sends is a setting rather than a constant, and `hidden off` exists. It
+is not gated on a class, since a venom does not care what you play.
+
+Orion triggers on the same line and never diagnoses: it arms six symptom
+checks (`ori hiddenchecks`) and counts in a counter its own comment calls not
+working. The two do not conflict.
+
+Not settled, and only a live bite settles it: orifox re-queues its attack with
+`queue addclear eqbal HUNTING_ATTACK` whenever the queue lacks one, so a
+DIAGNOSE that arrives off balance and is queued by the server may be cleared
+again before it runs. `hidden send` is there to change the commands if so.
+
+  hidden                  what it sends, and how often it has
+  hidden on|off           act on the line at all
+  hidden send &lt;a;b&gt;       the commands, separated by semicolons
+  hidden gap &lt;seconds&gt;    how long a repeat of the line is ignored for
+  hidden diag             build stamp, trigger count, where settings are saved
+
+]]
+
+AchaeaHidden = AchaeaHidden or {}
+local M = AchaeaHidden
+
+M.VERSION = "0.1.0"
+M.BUILD = M.BUILD or "source"   -- build.py replaces this
+
+-- Settings, and the only keys a saved file is allowed to bring back. Filtered
+-- by name and by type on the way in, so a setting dropped in a later version
+-- cannot return out of an old file.
+local CONFIG_DEFAULTS = {
+  enabled = true,                       -- act on the line
+  send    = "clearqueue all;diagnose",  -- what to send, `;` between commands
+  gap     = 2,                          -- seconds in which a repeat is ignored
+}
+M.CONFIG_DEFAULTS = CONFIG_DEFAULTS
+
+M.config = M.config or {}
+for key, value in pairs(CONFIG_DEFAULTS) do
+  if M.config[key] == nil then M.config[key] = value end
+end
+
+-- On the module table rather than in a file-local: Mudlet keeps temp triggers
+-- across a script recompile, and a fresh local would lose the id of the old
+-- one and install a second, sending everything twice.
+M.state = M.state or {
+  triggers = {},
+  seen     = 0,     -- times the line arrived
+  sent     = 0,     -- times it was acted on
+  last     = nil,   -- when it was last acted on, M.now()
+  loaded   = "none",
+}
+local S = M.state
+
+-- The game's line. A prefix rather than the
+-- whole line: Orion glues stopwatches onto the ends of lines it times, and an
+-- end anchor against a line somebody else has appended to never fires.
+M.LINE = "You are confused as to the effects of the venom."
+M.PATTERN = [[^You are confused as to the effects of the venom\.]]
+local function log(message, colour)
+  cecho("&lt;" .. (colour or "orange") .. "&gt;[AchaeaHidden]&lt;reset&gt; " .. message .. "\n")
+end
+
+-- ------------------------------------------------------------------- settings
+
+function M.path()
+  return getMudletHomeDir() .. "/achaea-hidden.lua"
+end
+
+function M.load()
+  local path = M.path()
+  if not (io.exists and io.exists(path)) then
+    S.loaded = "none"
+    return false
+  end
+  local stored = {}
+  if not pcall(table.load, path, stored) then
+    -- table.load runs the file as Lua, so a half-written one raises. Say so,
+    -- and let M.save move it aside rather than write over it.
+    S.loaded = "unreadable"
+    log("could not read " .. path .. "; using the defaults", "red")
+    return false
+  end
+  for key, default in pairs(CONFIG_DEFAULTS) do
+    if type(stored[key]) == type(default) then M.config[key] = stored[key] end
+  end
+  S.loaded = "ok"
+  return true
+end
+
+function M.save()
+  local path = M.path()
+  if S.loaded == "unreadable" then
+    pcall(os.rename, path, path .. ".bad")
+    S.loaded = "ok"
+  end
+  local out = {}
+  for key in pairs(CONFIG_DEFAULTS) do out[key] = M.config[key] end
+  pcall(table.save, path, out)
+end
+
+-- --------------------------------------------------------------------- reflex
+
+--- Seconds, as fine as the client gives them.
+function M.now()
+  if type(getEpoch) == "function" then
+    local ok, t = pcall(getEpoch)
+    if ok and tonumber(t) then return tonumber(t) end
+  end
+  return os.time()
+end
+
+--- The commands the `send` setting holds, in order.
+function M.commands()
+  local out = {}
+  for cmd in (tostring(M.config.send or "") .. ";"):gmatch("(.-);") do
+    cmd = cmd:match("^%s*(.-)%s*$")
+    if cmd ~= "" then out[#out + 1] = cmd end
+  end
+  return out
+end
+
+--- Safe on any line: anything but the venom line does nothing.
+function M.onLine(text)
+  if type(text) ~= "string" or text:sub(1, #M.LINE) ~= M.LINE then return false end
+  S.seen = S.seen + 1
+  if not M.config.enabled then return false end
+  -- Two bites in one breath want one diagnose, not two fighting over the queue.
+  local now = M.now()
+  if S.last and now - S.last &lt; (tonumber(M.config.gap) or 0) then return false end
+  local commands = M.commands()
+  if #commands == 0 then return false end
+  S.last = now
+  S.sent = S.sent + 1
+  for _, cmd in ipairs(commands) do send(cmd) end
+  -- A trigger's echo lands on the line that fired it, so it starts its own.
+  cecho("\n")
+  log("hidden affliction: " .. table.concat(commands, ", "))
+  return true
+end
+
+-- ------------------------------------------------------------------- commands
+
+--- The one renderer for "is this on, and what does it do".
+function M.statusLine()
+  local commands = M.commands()
+  return "status: " .. (M.config.enabled and "ON" or "OFF") .. ", sends " ..
+         (#commands &gt; 0 and table.concat(commands, ", ") or "nothing") ..
+         " - line seen " .. S.seen .. ", acted on " .. S.sent
+end
+
+function M.report()
+  log(M.statusLine())
+  for _, row in ipairs(M.COMMANDS or {}) do
+    echo(string.format("  %-22s %s\n", row.usage, row.help))
+  end
+end
+
+function M.setEnabled(on)
+  M.config.enabled = on and true or false
+  M.save()
+  log(M.statusLine())
+  return M.config.enabled
+end
+
+function M.setSend(text)
+  M.config.send = tostring(text or "")
+  M.save()
+  log(M.statusLine())
+  return M.commands()
+end
+
+function M.setGap(seconds)
+  local n = tonumber(seconds)
+  if not n or n &lt; 0 then
+    log("gap wants a number of seconds, 0 or more", "red")
+    return M.config.gap
+  end
+  M.config.gap = n
+  M.save()
+  log("a repeat inside " .. n .. "s is ignored")
+  return n
+end
+
+function M.diag()
+  log("AchaeaHidden " .. M.VERSION .. " build " .. M.BUILD)
+  echo("  " .. M.statusLine() .. "\n")
+  echo("  pattern:   " .. M.PATTERN .. "\n")
+  echo("  gap:       " .. tostring(M.config.gap) .. "s\n")
+  echo("  triggers:  " .. #S.triggers .. " (1 is right; more means a second copy)\n")
+  echo("  settings:  " .. M.path() .. " (" .. S.loaded .. ")\n")
+end
+
+-- --------------------------------------------------------------- start / stop
+
+function M.stop()
+  for _, id in ipairs(S.triggers) do pcall(killTrigger, id) end
+  S.triggers = {}
+  return true
+end
+
+function M.start()
+  M.stop()
+  S.triggers = {
+    tempRegexTrigger(M.PATTERN, function() M.onLine(line) end),
+  }
+  return true
+end
+
+M.load()
+M.start()
+
+-- Generated by build.py from its ALIASES table. Do not edit here.
+AchaeaHidden.BUILD = "d30aacc9"
+AchaeaHidden.COMMANDS = {
+    { usage = "hidden", help = "whether it is on, what it sends, and this list" },
+    { usage = "hidden on|off", help = "clear the queue and diagnose on the venom line at all" },
+    { usage = "hidden send &lt;a;b&gt;", help = "the commands it sends, separated by semicolons" },
+    { usage = "hidden gap &lt;seconds&gt;", help = "how long a repeat of the line is ignored for" },
+    { usage = "hidden diag", help = "build stamp, trigger count, where settings are saved" },
+}
+</script>
+            <eventHandlerList />
+        </Script>
+    </ScriptPackage>
+    <AliasPackage>
+        <AliasGroup isActive="yes" isFolder="yes">
+            <name>AchaeaHidden</name>
+            <script></script>
+            <command></command>
+            <packageName>AchaeaHidden</packageName>
+            <regex></regex>
+            <Alias isActive="yes" isFolder="no">
+                <name>help</name>
+                <script>AchaeaHidden.report()</script>
+                <command></command>
+                <packageName>AchaeaHidden</packageName>
+                <regex>^hidden$</regex>
+            </Alias>
+            <Alias isActive="yes" isFolder="no">
+                <name>onoff</name>
+                <script>AchaeaHidden.setEnabled(matches[2] == "on")</script>
+                <command></command>
+                <packageName>AchaeaHidden</packageName>
+                <regex>^hidden\s+(on|off)$</regex>
+            </Alias>
+            <Alias isActive="yes" isFolder="no">
+                <name>send</name>
+                <script>AchaeaHidden.setSend(matches[2])</script>
+                <command></command>
+                <packageName>AchaeaHidden</packageName>
+                <regex>^hidden\s+send\s+(.+)$</regex>
+            </Alias>
+            <Alias isActive="yes" isFolder="no">
+                <name>gap</name>
+                <script>AchaeaHidden.setGap(matches[2])</script>
+                <command></command>
+                <packageName>AchaeaHidden</packageName>
+                <regex>^hidden\s+gap\s+(\S+)$</regex>
+            </Alias>
+            <Alias isActive="yes" isFolder="no">
+                <name>diag</name>
+                <script>AchaeaHidden.diag()</script>
+                <command></command>
+                <packageName>AchaeaHidden</packageName>
+                <regex>^hidden\s+diag$</regex>
+            </Alias>
+        </AliasGroup>
+    </AliasPackage>
+</MudletPackage>

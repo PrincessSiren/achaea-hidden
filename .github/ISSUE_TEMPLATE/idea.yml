@@ -1,0 +1,33 @@
+name: An idea
+description: Something the package could do, or do differently.
+labels: ["idea"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What would it do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: What does that get you?
+      description: >-
+        The situation it would help in, rather than the mechanism. This package
+        is deliberately one question asked of one line, so the useful argument
+        is usually about the situation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: What does the game say about it?
+      description: >-
+        If the idea depends on how Achaea behaves, name the scroll or the
+        command that shows it -- `HELP 4.6.1`, `AB SURVIVAL DIAGNOSE`.
+        Rules here get built from what the game prints, not from what we
+        remember it printing. Leave this blank if it does not apply.
+    validations:
+      required: false

@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+
+# The built package. The .xml is committed because it is what actually gets
+# installed and CI diffs it against the .lua; the .mpackage is just that same
+# .xml zipped with a config.lua, so it is rebuilt rather than tracked.
+*.mpackage

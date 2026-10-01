@@ -1,0 +1,187 @@
+# Builds the .mpackage for a tag and attaches it to the release.
+#
+# The package is built here rather than uploaded by hand so that what people
+# download is provably built from the tagged source. build.py is stdlib only,
+# so the runner's own python will do.
+name: Release
+
+permissions:
+  contents: write
+  # Lets the publish step mint the short-lived OIDC token the Mudlet package
+  # repository verifies. Without it core.getIDToken fails with "Unable to get
+  # ACTIONS_ID_TOKEN_REQUEST_URL".
+  id-token: write
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y luajit
+
+      # A tag is not the place to discover the harness was red.
+      - name: Harness
+        run: luajit test_harness.lua
+
+      # A tag naming a version the source does not claim is the mistake this
+      # guard exists for: the .mpackage carries M.VERSION, so v0.2.0 built from
+      # a 0.1.0 source would install as 0.1.0 and nothing would say so.
+      - name: Tag matches M.VERSION
+        run: |
+          python3 -c "
+          import re, pathlib, os, sys
+          src = pathlib.Path('AchaeaHidden.lua').read_text()
+          version = re.search(r'^M\.VERSION\s*=\s*\"([^\"]+)\"', src, re.M).group(1)
+          tag = os.environ['GITHUB_REF_NAME'].lstrip('v')
+          if version != tag:
+              sys.exit(f'tag v{tag} does not match M.VERSION {version}')
+          print('tag and source agree on', version)"
+
+      # Also confirms the committed .xml matches the .lua, since a mismatch
+      # here would ship a package built from something nobody reviewed.
+      - name: Build
+        id: build
+        run: |
+          python3 build.py
+          git diff --exit-code -- '*.xml' || {
+            echo "::error::committed .xml does not match the .lua at this tag"
+            exit 1
+          }
+          # The stamp is read back out of the .xml the check above just proved
+          # matches the .lua, rather than parsed off build.py's own output: it
+          # is the string that ships, and it is the string `hidden diag`
+          # prints back in Mudlet.
+          build=$(sed -n 's/^AchaeaHidden\.BUILD = "\(.*\)"$/\1/p' AchaeaHidden.xml)
+          [ -n "$build" ] || { echo "::error::no build stamp in AchaeaHidden.xml"; exit 1; }
+          echo "stamp=$build" >> "$GITHUB_OUTPUT"
+
+      # Create the release if the tag was pushed on its own, so the two orders
+      # -- tag first, or `gh release create` first -- both end up here.
+      - name: Attach the package to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "AchaeaHidden ${GITHUB_REF_NAME#v}" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" AchaeaHidden.mpackage --clobber
+          echo "sha256: $(sha256sum AchaeaHidden.mpackage)" >> "$GITHUB_STEP_SUMMARY"
+
+      # Publishing lives in this file rather than a publish.yml of its own, and
+      # that is not a style choice twice over.
+      #
+      # The registry pins job_workflow_ref -- the file the running job is
+      # actually in -- so the workflow it is registered against has to be the
+      # one holding this step; a reusable workflow would name itself instead and
+      # be refused.
+      #
+      # And a `release: published` trigger would race this job: the release
+      # exists before the step above attaches anything to it, so a publish
+      # hanging off that event can find no .mpackage asset. Here the asset is
+      # already up, and a run on a tag is pinned harder at the far end -- the
+      # asset has to belong to that tag's own release.
+      # Gated on a repository variable rather than simply present, because
+      # publishing needs the Mudlet package repository to know this repo
+      # first: trusted-publishers.json there pins the owner, the repo *and*
+      # job_workflow_ref, so until that entry is merged this step can only
+      # fail, and it would fail on the one run where the release itself went
+      # fine. Set PUBLISH_TO_MUDLET to `true` once the registry PR lands.
+      #
+      # Renaming this file revokes publishing, since the registry names it by
+      # path.
+      - name: Publish to the Mudlet package repository
+        if: vars.PUBLISH_TO_MUDLET == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('https://packages.mudlet.org')
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: process.env.GITHUB_REF_NAME,
+            })
+            const asset = release.assets.find(a => a.name.endsWith('.mpackage'))
+            if (!asset) throw new Error('no .mpackage asset on this release')
+
+            const response = await fetch('https://packages.mudlet.org/api/publish', {
+              method: 'POST',
+              headers: {
+                authorization: `Bearer ${token}`,
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify({ artifactUrl: asset.browser_download_url }),
+            })
+
+            const result = await response.json()
+            if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`)
+            core.notice(`Opened ${result.pullRequest}`)
+
+      # Say so in Discord, where the people who install this actually are.
+      #
+      # What the message carries is the package and the build stamp, which are
+      # the two things a player can act on: the .mpackage to install, and the
+      # string `hidden diag` prints back. The version cannot answer "is
+      # Mudlet running this?" -- it says what you expect whether or not
+      # anything was rebuilt -- and the stamp is the content hash that can. The
+      # registry pull request was here and is not: it is about getting the
+      # package into Mudlet's package manager, which is this repository's
+      # business rather than the channel's, and it is still in the run log.
+      #
+      # It stays the last step even so. Everything it names has to exist first,
+      # and announcing a version whose publish step threw would be announcing a
+      # release that is not finished.
+      #
+      # It is also the only step allowed to fail. By the time it runs the
+      # package is released and published; a webhook that 500s is a message
+      # nobody got, not a release that went wrong, and re-running the job to
+      # get the message out would ask the registry to publish the same version
+      # twice. So the failure is a warning and the job stays green.
+      #
+      # The webhook URL is a secret because it is a bearer credential: anyone
+      # holding it can post to that channel as this package. A secret cannot be
+      # read in an `if:`, which is why it is lifted into `env` first -- that is
+      # also what makes the step skip cleanly in a fork, where no secret exists
+      # and nobody wants this repository's channel notified about their tag.
+      - name: Announce in Discord
+        if: env.DISCORD_WEBHOOK != ''
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          BUILD: ${{ steps.build.outputs.stamp }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          release="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
+          download="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/AchaeaHidden.mpackage"
+
+          # jq builds the JSON so that nothing interpolated has to be trusted to
+          # be quote-free, and the payload goes to curl as a file so the webhook
+          # URL is the only thing on the command line.
+          jq -n \
+            --arg title "AchaeaHidden $version" \
+            --arg release "$release" \
+            --arg download "$download" \
+            --arg build "$BUILD" \
+            '{
+              username: "AchaeaHidden",
+              embeds: [{
+                title: $title,
+                url: $release,
+                color: 15115329,   # 0xE6A441, the gold in the Discord icon
+                description: "Clear the queue and diagnose when a venom hides its affliction.\n\n`mpkg install AchaeaHidden`",
+                fields: [
+                  { name: "Package", value: ("[AchaeaHidden.mpackage](" + $download + ")") },
+                  { name: "Build", value: ("`" + $build + "` -- `hidden diag` should say this; anything else is a stale install") }
+                ]
+              }]
+            }' > "$RUNNER_TEMP/discord.json"
+
+          curl --fail-with-body -sS -X POST \
+            -H "content-type: application/json" \
+            -d "@$RUNNER_TEMP/discord.json" \
+            "$DISCORD_WEBHOOK" \
+            || echo "::warning::the Discord announcement did not go out; the release itself is fine"

@@ -1,0 +1,8 @@
+# The only dependency here is the actions CI pins. Everything the package
+# itself needs is stdlib Python and the Lua that Mudlet already embeds.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
