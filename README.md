@@ -92,10 +92,19 @@ equilibrium, so the attack that was queued behind it fails with "You must
 regain equilibrium first", is queued again by the server, and lands when
 equilibrium returns.
 
+**Do not queue it under `eb` by hand.** `queue add eb diagnose` was tried in
+the same hunt. The game answers "Added DIAGNOSE to your eb queue.", which
+looks right, and then the hunting script's `queue addclear eqbal` clears it
+along with its own attack: three bites, no diagnosis. The bare `diagnose`
+survives because the server files it under the balance queue, which that
+`addclear` does not touch.
+
 **What has not been seen** is any setup other than that one: no hunting
 script, a different one, or server-side queueing switched off
 (`CONFIG USEQUEUEING OFF`), where a diagnose sent off balance would simply be
-refused. `hidden send` changes the commands without a rebuild.
+refused. `queue add bal diagnose` would not depend on that setting and should
+not be cleared either, but nobody has watched it. `hidden send` changes the
+commands without a rebuild.
 
 ## Build and test
 
