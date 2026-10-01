@@ -15,13 +15,14 @@ One line of game output, one reflex:
 
 is all the game says when a venom gives you an affliction without telling you
 which. Nothing can be cured by name until it is known, so this clears the
-queue and diagnoses:
+queue and diagnoses, as soon as balance allows:
 
   clearqueue all
-  diagnose
+  queue add bal diagnose
 
-`CLEARQUEUE ALL` is HELP 4.6.1. The line was captured from a vampire spider's
-bite; the harness carries the lines around it.
+`CLEARQUEUE ALL` and `QUEUE ADD` are HELP 4.6.1, and DIAGNOSE is AB SURVIVAL
+DIAGNOSE. The line was captured from a vampire spider's bite; the harness
+carries the lines around it.
 
 It sends commands to the game unasked, which is the whole of what it does:
 what it sends is a setting rather than a constant, and `hidden off` exists. It
@@ -31,10 +32,10 @@ Orion triggers on the same line and never diagnoses: it arms six symptom
 checks (`ori hiddenchecks`) and counts in a counter its own comment calls not
 working. The two do not conflict.
 
-Not settled, and only a live bite settles it: orifox re-queues its attack with
-`queue addclear eqbal HUNTING_ATTACK` whenever the queue lacks one, so a
-DIAGNOSE that arrives off balance and is queued by the server may be cleared
-again before it runs. `hidden send` is there to change the commands if so.
+Seen working against a hunting script that clears and refills the `eb` queue
+on nearly every prompt: the diagnose waits in the balance queue, which that
+script leaves alone, and runs when balance returns, ahead of the attack.
+`hidden send` is there if another setup needs different commands.
 
   hidden                  what it sends, and how often it has
   hidden on|off           act on the line at all
@@ -47,7 +48,7 @@ again before it runs. `hidden send` is there to change the commands if so.
 AchaeaHidden = AchaeaHidden or {}
 local M = AchaeaHidden
 
-M.VERSION = "0.1.0"
+M.VERSION = "0.2.0"
 M.BUILD = M.BUILD or "source"   -- build.py replaces this
 
 -- Settings, and the only keys a saved file is allowed to bring back. Filtered
@@ -55,7 +56,10 @@ M.BUILD = M.BUILD or "source"   -- build.py replaces this
 -- cannot return out of an old file.
 local CONFIG_DEFAULTS = {
   enabled = true,                       -- act on the line
-  send    = "clearqueue all;diagnose",  -- what to send, `;` between commands
+  -- Queued on balance by name, not sent bare: DIAGNOSE needs balance, a bare
+  -- one sent off balance is only kept if CONFIG USEQUEUEING is on, and one
+  -- queued under `eb` shares a queue that hunting scripts clear every prompt.
+  send    = "clearqueue all;queue add bal diagnose",  -- `;` between commands
   gap     = 2,                          -- seconds in which a repeat is ignored
 }
 M.CONFIG_DEFAULTS = CONFIG_DEFAULTS
@@ -77,9 +81,9 @@ M.state = M.state or {
 }
 local S = M.state
 
--- The game's line. A prefix rather than the
--- whole line: Orion glues stopwatches onto the ends of lines it times, and an
--- end anchor against a line somebody else has appended to never fires.
+-- The game's line. A prefix rather than the whole line: Orion glues
+-- stopwatches onto the ends of lines it times, and an end anchor against a
+-- line somebody else has appended to never fires.
 M.LINE = "You are confused as to the effects of the venom."
 M.PATTERN = [[^You are confused as to the effects of the venom\.]]
 local function log(message, colour)
@@ -116,12 +120,19 @@ end
 function M.save()
   local path = M.path()
   if S.loaded == "unreadable" then
-    pcall(os.rename, path, path .. ".bad")
+    -- os.rename reports failure by returning nil, not by raising. If the file
+    -- could not be moved aside, writing now would destroy the only copy.
+    local ok, moved = pcall(os.rename, path, path .. ".bad")
+    if not (ok and moved) then
+      log("could not move " .. path .. " aside; settings not saved", "red")
+      return false
+    end
     S.loaded = "ok"
   end
   local out = {}
   for key in pairs(CONFIG_DEFAULTS) do out[key] = M.config[key] end
   pcall(table.save, path, out)
+  return true
 end
 
 -- --------------------------------------------------------------------- reflex
@@ -157,10 +168,15 @@ function M.onLine(text)
   if #commands == 0 then return false end
   S.last = now
   S.sent = S.sent + 1
+  -- A trigger's echo lands on the line that fired it, so the alert starts
+  -- with a newline of its own. It ends without one, and goes out before the
+  -- commands: Mudlet's echo of a sent command starts a new line by itself when
+  -- the last line is not empty (TConsole::printCommand), so a newline of ours
+  -- on either side of the sends is a blank line. Sending first and echoing
+  -- "\n" after was seen to print one; this order has not been watched live.
+  cecho("\n&lt;orange&gt;[AchaeaHidden]&lt;reset&gt; hidden affliction: " ..
+        table.concat(commands, ", "))
   for _, cmd in ipairs(commands) do send(cmd) end
-  -- A trigger's echo lands on the line that fired it, so it starts its own.
-  cecho("\n")
-  log("hidden affliction: " .. table.concat(commands, ", "))
   return true
 end
 
@@ -236,7 +252,7 @@ M.load()
 M.start()
 
 -- Generated by build.py from its ALIASES table. Do not edit here.
-AchaeaHidden.BUILD = "d30aacc9"
+AchaeaHidden.BUILD = "f55fa8ec"
 AchaeaHidden.COMMANDS = {
     { usage = "hidden", help = "whether it is on, what it sends, and this list" },
     { usage = "hidden on|off", help = "clear the queue and diagnose on the venom line at all" },

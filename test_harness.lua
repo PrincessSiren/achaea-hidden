@@ -14,9 +14,10 @@ local ECHOED, SENT, TRIGGERS, SAVED = {}, {}, {}, nil
 local STORED = nil          -- what the settings file holds, or nil for no file
 local RAISE_ON_LOAD = false
 local RENAMED = {}
-function cecho(text) ECHOED[#ECHOED + 1] = text end
-function echo(text) ECHOED[#ECHOED + 1] = text end
-function send(cmd) SENT[#SENT + 1] = cmd end
+local ORDER = {}             -- echoes and sends together, in the order made
+function cecho(text) ECHOED[#ECHOED + 1] = text; ORDER[#ORDER + 1] = "echo" end
+function echo(text) ECHOED[#ECHOED + 1] = text; ORDER[#ORDER + 1] = "echo" end
+function send(cmd) SENT[#SENT + 1] = cmd; ORDER[#ORDER + 1] = "send" end
 function getMudletHomeDir() return "/profile" end
 io.exists = function() return STORED ~= nil or RAISE_ON_LOAD end
 table.load = function(_, into)
@@ -28,7 +29,12 @@ table.save = function(_, t)
   for key, value in pairs(t) do SAVED[key] = value end
 end
 local realRename = os.rename
-os.rename = function(from, to) RENAMED[#RENAMED + 1] = from .. " -> " .. to; return true end
+local RENAME_FAILS = false
+os.rename = function(from, to)
+  if RENAME_FAILS then return nil, "permission denied" end
+  RENAMED[#RENAMED + 1] = from .. " -> " .. to
+  return true
+end
 local seq = 0
 function tempRegexTrigger(re, fn)
   seq = seq + 1
@@ -63,6 +69,13 @@ end
 
 local function load() assert(loadfile(HERE .. "/AchaeaHidden.lua"))() end
 
+-- ---- it installs switched on ----------------------------------------------
+load()
+assert(AchaeaHidden.CONFIG_DEFAULTS.enabled == true and AchaeaHidden.config.enabled == true,
+       "a fresh install acts on the line without being told to")
+AchaeaHidden.stop()
+AchaeaHidden = nil
+
 -- ---- a saved file comes back, filtered by name and type -------------------
 STORED = { enabled = false, send = "diagnose", gap = "soon", retired = true }
 load()
@@ -73,7 +86,7 @@ assert(M.config.retired == nil, "a key no version knows does not come back")
 assert(M.state.loaded == "ok")
 M.setEnabled(true)
 M.setSend(M.CONFIG_DEFAULTS.send)
-assert(SAVED.enabled == true and SAVED.send == "clearqueue all;diagnose" and SAVED.gap == 2,
+assert(SAVED.enabled == true and SAVED.send == "clearqueue all;queue add bal diagnose" and SAVED.gap == 2,
        "every key that is loaded is saved")
 assert(M.BUILD == "source", "an unbuilt load says so")
 
@@ -94,7 +107,7 @@ local pattern = pcreToLua(trigger.re)
 
 local clock = 100
 M.now = function() return clock end
-SENT = {}
+SENT, ORDER = {}, {}
 local hits = 0
 for _, text in ipairs(captured) do
   if text:find(pattern) then
@@ -107,9 +120,22 @@ for _, text in ipairs(captured) do
   end
 end
 assert(hits == 1, "the captured venom line fires the trigger exactly once")
-assert(#SENT == 2 and SENT[1] == "clearqueue all" and SENT[2] == "diagnose",
-       "it clears the queue, then diagnoses")
-assert(ECHOED[#ECHOED - 1] == "\n", "a trigger's echo starts a line of its own")
+assert(#SENT == 2 and SENT[1] == "clearqueue all" and SENT[2] == "queue add bal diagnose",
+       "it clears the queue, then queues a diagnose on balance")
+-- Not under `eb`: that is the queue a hunting script clears every prompt, and
+-- a diagnose put there was watched being cleared three bites in three.
+assert(not M.CONFIG_DEFAULTS.send:find("queue add eb", 1, true)
+       and not M.CONFIG_DEFAULTS.send:find("eqbal", 1, true),
+       "the default never queues under eb")
+-- Mudlet's echo of a sent command starts its own line when the last one is
+-- not empty, so a newline of ours next to the sends is a blank line. The
+-- alert opens with one, closes without one, and goes out first.
+local alert = ECHOED[#ECHOED]
+assert(alert:sub(1, 1) == "\n", "a trigger's echo starts a line of its own")
+assert(alert:sub(-1) ~= "\n", "and leaves the newline after it to the command echo")
+assert(table.concat(ORDER, " ") == "echo send send",
+       "the alert is printed before anything is sent")
+assert(M.state.sent == 1 and M.state.seen == 1, "and it is counted once")
 
 -- Orion glues stopwatches onto line ends; a tail must not stop it.
 assert((M.LINE .. "[Venom] (1.00)"):find(pattern), "no end anchor")
@@ -161,6 +187,12 @@ assert(RENAMED[1] == "/profile/achaea-hidden.lua -> /profile/achaea-hidden.lua.b
        "the unreadable file is renamed before the save")
 M.setEnabled(true)
 assert(#RENAMED == 1, "and only once")
+-- A rename that fails must not be followed by a write over the same file.
+load()
+RENAME_FAILS, SAVED = true, nil
+assert(M.save() == false and SAVED == nil, "a file that cannot be moved aside is not written over")
+assert(M.state.loaded == "unreadable", "and it is tried again at the next save")
+RENAME_FAILS = false
 M.stop()
 os.rename = realRename
 
