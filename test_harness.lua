@@ -14,9 +14,10 @@ local ECHOED, SENT, TRIGGERS, SAVED = {}, {}, {}, nil
 local STORED = nil          -- what the settings file holds, or nil for no file
 local RAISE_ON_LOAD = false
 local RENAMED = {}
-function cecho(text) ECHOED[#ECHOED + 1] = text end
-function echo(text) ECHOED[#ECHOED + 1] = text end
-function send(cmd) SENT[#SENT + 1] = cmd end
+local ORDER = {}             -- echoes and sends together, in the order made
+function cecho(text) ECHOED[#ECHOED + 1] = text; ORDER[#ORDER + 1] = "echo" end
+function echo(text) ECHOED[#ECHOED + 1] = text; ORDER[#ORDER + 1] = "echo" end
+function send(cmd) SENT[#SENT + 1] = cmd; ORDER[#ORDER + 1] = "send" end
 function getMudletHomeDir() return "/profile" end
 io.exists = function() return STORED ~= nil or RAISE_ON_LOAD end
 table.load = function(_, into)
@@ -94,7 +95,7 @@ local pattern = pcreToLua(trigger.re)
 
 local clock = 100
 M.now = function() return clock end
-SENT = {}
+SENT, ORDER = {}, {}
 local hits = 0
 for _, text in ipairs(captured) do
   if text:find(pattern) then
@@ -110,6 +111,10 @@ assert(hits == 1, "the captured venom line fires the trigger exactly once")
 assert(#SENT == 2 and SENT[1] == "clearqueue all" and SENT[2] == "diagnose",
        "it clears the queue, then diagnoses")
 assert(ECHOED[#ECHOED - 1] == "\n", "a trigger's echo starts a line of its own")
+-- Mudlet's echo of a sent command ends the line by itself, so a newline of
+-- ours after the sends is a blank line above the alert. Alert first.
+assert(table.concat(ORDER, " ") == "echo echo send send",
+       "the alert is printed before anything is sent")
 
 -- Orion glues stopwatches onto line ends; a tail must not stop it.
 assert((M.LINE .. "[Venom] (1.00)"):find(pattern), "no end anchor")

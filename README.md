@@ -62,30 +62,40 @@ on, it tries six symptom checks: hold breath for asthma, touch mindseye for
 paralysis, and so on. That finds those six and nothing else. The two packages
 do not conflict.
 
-## What a live run showed, and what it did not
+## What a live run shows
 
-The trigger fires and both commands go out. With the bite landing off
-balance, the game answered:
+Three bites while hunting with Orion and Orifox, which re-queues its attack
+with `queue addclear eqbal` on nearly every prompt. Each time the bite landed
+off balance, and each time:
 
 ```
+You are confused as to the effects of the venom.
+[AchaeaHidden] hidden affliction: clearqueue all, diagnose
 [System]: All queued commands cleared.
 You must regain balance first.
 diagnose was added to your balance queue.
+...
+You have recovered balance on all limbs.
+[System]: Running queued eb command: DIAGNOSE
+You are:
+extremely oily.
+Equilibrium used: 1.00s.
 ```
 
-So the server queues the diagnose by itself, in the **balance** queue.
+So the server queues the diagnose by itself, the hunting script's `addclear`
+does not remove it, and it runs ahead of the re-queued attack when balance
+returns. Server-side curing then cured what the diagnose named, all three
+times.
 
-**Not yet seen: the diagnose then running.** A hunting script that owns the
-queue re-queues its attack at once; Orifox, for one, sends
-`queue addclear eqbal HUNTING_ATTACK`. `HELP 4.6.1` says `ADDCLEAR` removes
-commands "of the specified queue type", and the attack sits in the `eb` queue,
-so the diagnose should survive. Nobody has watched it do so. If the
-`[AchaeaHidden]` line prints and no diagnose listing follows, `hidden send`
-changes the commands without a rebuild.
+**What it costs: about a second per bite.** The diagnose spends a second of
+equilibrium, so the attack that was queued behind it fails with "You must
+regain equilibrium first", is queued again by the server, and lands when
+equilibrium returns.
 
-**Diagnosing costs a second of equilibrium.** That is a second in which
-nothing else that needs equilibrium can run, every time the line fires and
-the gap has passed.
+**What has not been seen** is any setup other than that one: no hunting
+script, a different one, or server-side queueing switched off
+(`CONFIG USEQUEUEING OFF`), where a diagnose sent off balance would simply be
+refused. `hidden send` changes the commands without a rebuild.
 
 ## Build and test
 
