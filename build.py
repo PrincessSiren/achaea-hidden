@@ -170,13 +170,14 @@ The game's whole notice is one line:
 You are confused as to the effects of the venom.
 ```
 
-On that line the package sends `clearqueue all` and then `diagnose`. A second
+On that line the package sends `clearqueue all` and then `queue add bal
+diagnose`, so the diagnose runs as soon as you have balance. A second
 bite inside two seconds sends nothing more.
 
 ```
 hidden
 hidden off
-hidden send clearqueue all;diagnose
+hidden send clearqueue all;queue add bal diagnose
 ```
 
 `hidden` is the full command list. What it sends is a setting, so it can be

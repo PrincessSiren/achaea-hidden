@@ -74,7 +74,7 @@ assert(M.config.retired == nil, "a key no version knows does not come back")
 assert(M.state.loaded == "ok")
 M.setEnabled(true)
 M.setSend(M.CONFIG_DEFAULTS.send)
-assert(SAVED.enabled == true and SAVED.send == "clearqueue all;diagnose" and SAVED.gap == 2,
+assert(SAVED.enabled == true and SAVED.send == "clearqueue all;queue add bal diagnose" and SAVED.gap == 2,
        "every key that is loaded is saved")
 assert(M.BUILD == "source", "an unbuilt load says so")
 
@@ -108,8 +108,13 @@ for _, text in ipairs(captured) do
   end
 end
 assert(hits == 1, "the captured venom line fires the trigger exactly once")
-assert(#SENT == 2 and SENT[1] == "clearqueue all" and SENT[2] == "diagnose",
-       "it clears the queue, then diagnoses")
+assert(#SENT == 2 and SENT[1] == "clearqueue all" and SENT[2] == "queue add bal diagnose",
+       "it clears the queue, then queues a diagnose on balance")
+-- Not under `eb`: that is the queue a hunting script clears every prompt, and
+-- a diagnose put there was watched being cleared three bites in three.
+assert(not M.CONFIG_DEFAULTS.send:find("queue add eb", 1, true)
+       and not M.CONFIG_DEFAULTS.send:find("eqbal", 1, true),
+       "the default never queues under eb")
 assert(ECHOED[#ECHOED - 1] == "\n", "a trigger's echo starts a line of its own")
 -- Mudlet's echo of a sent command ends the line by itself, so a newline of
 -- ours after the sends is a blank line above the alert. Alert first.

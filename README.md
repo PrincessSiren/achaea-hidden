@@ -13,11 +13,13 @@ On that line the package sends
 
 ```
 clearqueue all
-diagnose
+queue add bal diagnose
 ```
 
-and says so on a line of its own. A second bite inside two seconds sends
-nothing more. That is all it does. It is not gated on a class.
+and says so on a line of its own. The diagnose runs as soon as you have
+balance: at once if you have it, otherwise when it returns. A second bite
+inside two seconds sends nothing more. That is all it does. It is not gated on
+a class.
 
 ## Install
 
@@ -49,7 +51,7 @@ and is not written over.
   The harness carries those lines and fires the live trigger on them. The
   pattern is anchored at the start and not at the end, because other packages
   append their own text to lines they time.
-- **`CLEARQUEUE ALL`** is `HELP 4.6.1`.
+- **`CLEARQUEUE ALL` and `QUEUE ADD <queue> <command>`** are `HELP 4.6.1`.
 - **`DIAGNOSE`** is `AB SURVIVAL DIAGNOSE`: `DIAGNOSE/DIAG [ME]`, at a cost
   of 1.00 seconds of equilibrium. It also needs balance, which the scroll
   does not say and the game does: sent off balance it answers "You must
@@ -64,47 +66,57 @@ do not conflict.
 
 ## What a live run shows
 
-Three bites while hunting with Orion and Orifox, which re-queues its attack
-with `queue addclear eqbal` on nearly every prompt. Each time the bite landed
-off balance, and each time:
+Five bites while hunting with Orion and Orifox, which clears and refills the
+`eb` queue with `queue addclear eqbal` on nearly every prompt. Each time the
+bite landed off balance, and each time:
 
 ```
 You are confused as to the effects of the venom.
-[AchaeaHidden] hidden affliction: clearqueue all, diagnose
+[AchaeaHidden] hidden affliction: clearqueue all, queue add bal diagnose
 [System]: All queued commands cleared.
-You must regain balance first.
-diagnose was added to your balance queue.
+[System]: Added DIAGNOSE to your balance queue.
 ...
+[System]: Queued eb commands cleared.
+[System]: Added HUNTING_ATTACK to your eb queue.
 You have recovered balance on all limbs.
 [System]: Running queued eb command: DIAGNOSE
 You are:
-extremely oily.
+afflicted by a crippled left arm.
 Equilibrium used: 1.00s.
 ```
 
-So the server queues the diagnose by itself, the hunting script's `addclear`
-does not remove it, and it runs ahead of the re-queued attack when balance
-returns. Server-side curing then cured what the diagnose named, all three
-times.
+The diagnose waits in the balance queue, the hunting script's `addclear` does
+not remove it, and it runs ahead of the re-queued attack when balance returns.
+Server-side curing then cured what it named.
 
 **What it costs: about a second per bite.** The diagnose spends a second of
-equilibrium, so the attack that was queued behind it fails with "You must
-regain equilibrium first", is queued again by the server, and lands when
-equilibrium returns.
+equilibrium, so the attack queued behind it fails with "You must regain
+equilibrium first", is queued again by the server, and lands when equilibrium
+returns.
 
-**Do not queue it under `eb` by hand.** `queue add eb diagnose` was tried in
-the same hunt. The game answers "Added DIAGNOSE to your eb queue.", which
-looks right, and then the hunting script's `queue addclear eqbal` clears it
-along with its own attack: three bites, no diagnosis. The bare `diagnose`
-survives because the server files it under the balance queue, which that
-`addclear` does not touch.
+### Why the balance queue
 
-**What has not been seen** is any setup other than that one: no hunting
-script, a different one, or server-side queueing switched off
-(`CONFIG USEQUEUEING OFF`), where a diagnose sent off balance would simply be
-refused. `queue add bal diagnose` would not depend on that setting and should
-not be cleared either, but nobody has watched it. `hidden send` changes the
-commands without a rebuild.
+Three forms were tried in the same hunt.
+
+| sent | result |
+| --- | --- |
+| `diagnose` | Works, three bites in three, but only because the server queues a refused command itself. With `CONFIG USEQUEUEING OFF` it would simply be refused. |
+| `queue add eb diagnose` | Does not work. The game confirms "Added DIAGNOSE to your eb queue.", then the hunting script's `addclear eqbal` clears it with its own attack: three bites, no diagnosis. |
+| `queue add bal diagnose` | Works, five bites in five, and does not depend on that setting. This is the default. |
+
+`ADDCLEAR` removes commands "of the specified queue type" (`HELP 4.6.1`), so
+an entry in the balance queue is out of reach of a script that owns `eb`.
+
+### Not seen
+
+- A bite that lands while you **have** balance. A queued command whose
+  condition is already met has been seen to run at once for `eb`, and `bal`
+  should do the same.
+- Balance returning while equilibrium is still down. The diagnose would then
+  be refused; in every bite on record equilibrium was up.
+- A hunting script that clears the balance queue too, or no hunting script.
+
+`hidden send` changes the commands without a rebuild.
 
 ## Build and test
 
