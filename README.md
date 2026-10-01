@@ -51,8 +51,9 @@ and is not written over.
   append their own text to lines they time.
 - **`CLEARQUEUE ALL`** is `HELP 4.6.1`.
 - **`DIAGNOSE`** is `AB SURVIVAL DIAGNOSE`: `DIAGNOSE/DIAG [ME]`, at a cost
-  of 1.00 seconds of equilibrium. The scroll does not say whether it needs
-  balance, so that is still unknown.
+  of 1.00 seconds of equilibrium. It also needs balance, which the scroll
+  does not say and the game does: sent off balance it answers "You must
+  regain balance first."
 
 ## If you run Orion
 
@@ -61,16 +62,26 @@ on, it tries six symptom checks: hold breath for asthma, touch mindseye for
 paralysis, and so on. That finds those six and nothing else. The two packages
 do not conflict.
 
-## Not yet seen working
+## What a live run showed, and what it did not
 
-Nothing here has run in a live profile.
+The trigger fires and both commands go out. With the bite landing off
+balance, the game answered:
 
-**A hunting script that owns the queue may clear the diagnose.** Orifox, for
-one, sends `queue addclear eqbal HUNTING_ATTACK` whenever the queue has no
-attack in it. In the capture the bite landed off balance, so `diagnose` would be queued by
-the server and not run at once, and that `addclear` may take it out again. If
-the `[AchaeaHidden]` line prints and no diagnose follows, that is why.
-`hidden send` changes the commands without a rebuild.
+```
+[System]: All queued commands cleared.
+You must regain balance first.
+diagnose was added to your balance queue.
+```
+
+So the server queues the diagnose by itself, in the **balance** queue.
+
+**Not yet seen: the diagnose then running.** A hunting script that owns the
+queue re-queues its attack at once; Orifox, for one, sends
+`queue addclear eqbal HUNTING_ATTACK`. `HELP 4.6.1` says `ADDCLEAR` removes
+commands "of the specified queue type", and the attack sits in the `eb` queue,
+so the diagnose should survive. Nobody has watched it do so. If the
+`[AchaeaHidden]` line prints and no diagnose listing follows, `hidden send`
+changes the commands without a rebuild.
 
 **Diagnosing costs a second of equilibrium.** That is a second in which
 nothing else that needs equilibrium can run, every time the line fires and

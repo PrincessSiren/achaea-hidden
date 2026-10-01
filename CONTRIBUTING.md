@@ -55,8 +55,8 @@ fires that trigger on the captured lines, so a typo in the pattern or a
 dropped registration fails the run.
 
 A green run means the logic and the packaging hold. It does **not** mean the
-diagnose runs in a fight: whether `DIAGNOSE` needs balance, and what another
-package managing the queue does to it, are both open. See the
+diagnose runs in a fight: what another package managing the queue does to a
+diagnose the server has queued is still open. See the
 README.
 
 ## Versions
