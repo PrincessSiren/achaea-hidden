@@ -96,7 +96,7 @@ jobs:
       # path.
       - name: Publish to the Mudlet package repository
         if: vars.PUBLISH_TO_MUDLET == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const token = await core.getIDToken('https://packages.mudlet.org')
