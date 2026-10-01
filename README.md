@@ -94,10 +94,13 @@ The diagnose waits in the balance queue, the hunting script's `addclear` does
 not remove it, and it runs ahead of the re-queued attack when balance returns.
 Server-side curing then cured what it named.
 
-**What it costs: about a second per bite.** The diagnose spends a second of
-equilibrium, so the attack queued behind it fails with "You must regain
-equilibrium first", is queued again by the server, and lands when equilibrium
-returns.
+**What it costs: about a second per bite, and once a whole attack.** The
+diagnose spends a second of equilibrium, so the attack queued behind it fails
+with "You must regain equilibrium first", is queued again by the server piece
+by piece, and lands when equilibrium returns. The queue holds ten commands
+across all types (`HELP 4.6.1`). In one of the five bites the attack alias
+was seven commands long, the last piece got "Your queue is full", and that
+piece was the attack itself: that round's hit was lost, not delayed.
 
 ### Why the balance queue
 
@@ -108,7 +111,7 @@ Four forms were tried against the same hunting setup.
 | `diagnose` | Works, three bites in three, but only because the server queues a refused command itself. With `CONFIG USEQUEUEING OFF` it would simply be refused. |
 | `queue add eb diagnose` | Does not work. The game confirms "Added DIAGNOSE to your eb queue.", then the hunting script's `addclear eqbal` clears it with its own attack: three bites, no diagnosis. |
 | `queue add bal diagnose` | Works, five bites in five. Nothing is refused first, so it should not depend on that setting; it was not tried with the setting off. This is the default. |
-| `queue add full diagnose` | Did not run, one bite in one, during the fight or after it. The attack in `eb` takes the balance first each time, and `full` also waits on not being paralysed, which was the hidden affliction that bite. `QUEUE LIST` afterwards still showed it queued, with health, equilibrium and balance all up. |
+| `queue add full diagnose` | Did not run, one bite in one, during the fight or after it. `full` also waits on not being paralysed, and paralysis turned up straight after that bite. `QUEUE LIST` afterwards still showed it queued, with health, equilibrium and balance all up. |
 
 `ADDCLEAR` removes commands "of the specified queue type" (`HELP 4.6.1`), so
 an entry in the balance queue is out of reach of a script that owns `eb`.
