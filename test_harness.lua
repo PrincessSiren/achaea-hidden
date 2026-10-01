@@ -86,8 +86,10 @@ assert(M.config.retired == nil, "a key no version knows does not come back")
 assert(M.state.loaded == "ok")
 M.setEnabled(true)
 M.setSend(M.CONFIG_DEFAULTS.send)
-assert(SAVED.enabled == true and SAVED.send == "clearqueue all;queue add bal diagnose" and SAVED.gap == 2,
+assert(SAVED.enabled == true and SAVED.send == "queue add bal diagnose" and SAVED.gap == 2
+       and SAVED.clear == true,
        "every key that is loaded is saved")
+assert(M.CONFIG_DEFAULTS.clear == true, "the queue is cleared unless that is turned off")
 assert(M.BUILD == "source", "an unbuilt load says so")
 
 -- ---- the line, through the live trigger -----------------------------------
@@ -161,12 +163,45 @@ assert(M.onLine(M.LINE) == false and #SENT == 6, "off sends nothing")
 assert(M.state.seen == 5, "but the line is still counted")
 M.setEnabled(true)
 M.setSend(" queue addclearfull eqbal diagnose ; ")
-assert(M.onLine(M.LINE) == true and #SENT == 7
-       and SENT[7] == "queue addclearfull eqbal diagnose", "trimmed, blanks dropped")
+assert(M.onLine(M.LINE) == true and #SENT == 8 and SENT[7] == "clearqueue all"
+       and SENT[8] == "queue addclearfull eqbal diagnose", "trimmed, blanks dropped")
 clock = clock + 5
 M.setSend(";")
-assert(M.onLine(M.LINE) == false and #SENT == 7, "nothing to send is nothing sent")
+assert(M.onLine(M.LINE) == false and #SENT == 8, "nothing to send is nothing sent")
 assert(M.statusLine():find("sends nothing", 1, true))
+M.setSend(M.CONFIG_DEFAULTS.send)
+
+-- ---- clearing the queue is a switch of its own ----------------------------
+clock = clock + 5
+SENT, ORDER = {}, {}
+M.setClear(false)
+assert(SAVED.clear == false, "the switch is saved")
+assert(M.onLine(M.LINE) == true and #SENT == 1 and SENT[1] == "queue add bal diagnose",
+       "off, the diagnose is queued and nothing is cleared")
+assert(not M.statusLine():find("clearqueue", 1, true), "and the status line says what goes out")
+-- What 0.2.0 wrote to the settings file: the clear as the first word of
+-- `send`. The switch has to win over it both ways.
+clock = clock + 5
+SENT = {}
+M.setSend("clearqueue all;queue add bal diagnose")
+assert(M.onLine(M.LINE) == true and #SENT == 1 and SENT[1] == "queue add bal diagnose",
+       "off beats a clear left in `send` by an older version")
+clock = clock + 5
+SENT = {}
+M.setClear(true)
+assert(M.onLine(M.LINE) == true and #SENT == 2
+       and SENT[1] == "clearqueue all" and SENT[2] == "queue add bal diagnose",
+       "on, the same file clears once and not twice")
+clock = clock + 5
+SENT = {}
+M.setSend(" ClearQueue  ALL ; diagnose")
+assert(M.onLine(M.LINE) == true and #SENT == 2 and SENT[2] == "diagnose",
+       "however it was typed")
+clock = clock + 5
+SENT = {}
+M.setSend(";")
+assert(M.onLine(M.LINE) == false and #SENT == 0,
+       "with nothing to send, the queue is not cleared for nothing")
 M.setSend(M.CONFIG_DEFAULTS.send)
 M.COMMANDS = { { usage = "hidden", help = "this list" } }
 M.report(); M.diag()

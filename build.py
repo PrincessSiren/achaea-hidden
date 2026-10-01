@@ -68,11 +68,18 @@ ALIASES: list[tuple[str, str, str, str, str]] = [
         "clear the queue and diagnose on the venom line at all",
     ),
     (
+        "clear",
+        r"^hidden\s+clear\s+(on|off)$",
+        'AchaeaHidden.setClear(matches[2] == "on")',
+        "hidden clear on|off",
+        "send clearqueue all before the rest, or leave the queue alone",
+    ),
+    (
         "send",
         r"^hidden\s+send\s+(.+)$",
         "AchaeaHidden.setSend(matches[2])",
         "hidden send <a;b>",
-        "the commands it sends, separated by semicolons",
+        "the commands it sends after that, separated by semicolons",
     ),
     (
         "gap",
@@ -177,7 +184,8 @@ bite inside two seconds sends nothing more.
 ```
 hidden
 hidden off
-hidden send clearqueue all;queue add bal diagnose
+hidden clear off
+hidden send queue add bal diagnose
 ```
 
 `hidden` is the full command list. What it sends is a setting, so it can be

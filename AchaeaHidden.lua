@@ -18,8 +18,9 @@ DIAGNOSE. The line was captured from a vampire spider's bite; the harness
 carries the lines around it.
 
 It sends commands to the game unasked, which is the whole of what it does:
-what it sends is a setting rather than a constant, and `hidden off` exists. It
-is not gated on a class, since a venom does not care what you play.
+what it sends is a setting rather than a constant, and `hidden off` exists.
+Clearing the queue first is a switch of its own, `hidden clear`, on unless
+turned off. It is not gated on a class, since a venom does not care what you play.
 
 Orion triggers on the same line and never diagnoses: it arms six symptom
 checks (`ori hiddenchecks`) and counts in a counter its own comment calls not
@@ -32,7 +33,8 @@ script leaves alone, and runs when balance returns, ahead of the attack.
 
   hidden                  what it sends, and how often it has
   hidden on|off           act on the line at all
-  hidden send <a;b>       the commands, separated by semicolons
+  hidden clear on|off     send `clearqueue all` first, or leave the queue be
+  hidden send <a;b>       the commands after that, separated by semicolons
   hidden gap <seconds>    how long a repeat of the line is ignored for
   hidden diag             build stamp, trigger count, where settings are saved
 
@@ -41,7 +43,7 @@ script leaves alone, and runs when balance returns, ahead of the attack.
 AchaeaHidden = AchaeaHidden or {}
 local M = AchaeaHidden
 
-M.VERSION = "0.2.0"
+M.VERSION = "0.3.0"
 M.BUILD = M.BUILD or "source"   -- build.py replaces this
 
 -- Settings, and the only keys a saved file is allowed to bring back. Filtered
@@ -52,7 +54,10 @@ local CONFIG_DEFAULTS = {
   -- Queued on balance by name, not sent bare: DIAGNOSE needs balance, a bare
   -- one sent off balance is only kept if CONFIG USEQUEUEING is on, and one
   -- queued under `eb` shares a queue that hunting scripts clear every prompt.
-  send    = "clearqueue all;queue add bal diagnose",  -- `;` between commands
+  send    = "queue add bal diagnose",   -- `;` between commands
+  -- Whether CLEARQUEUE ALL goes out first. A switch of its own rather than a
+  -- word in `send`, so it can be turned off without retyping the rest.
+  clear   = true,
   gap     = 2,                          -- seconds in which a repeat is ignored
 }
 M.CONFIG_DEFAULTS = CONFIG_DEFAULTS
@@ -139,13 +144,23 @@ function M.now()
   return os.time()
 end
 
---- The commands the `send` setting holds, in order.
+M.CLEAR = "clearqueue all"
+
+--- The commands that go out, in order: the clear when `clear` is on, then
+--- what the `send` setting holds. A clear written into `send` is dropped, so
+--- the switch is the only thing that decides it: up to 0.2.0 the default
+--- `send` began with one, every save wrote it to the settings file, and left
+--- in it would be sent with the switch off, or twice with it on.
 function M.commands()
   local out = {}
   for cmd in (tostring(M.config.send or "") .. ";"):gmatch("(.-);") do
     cmd = cmd:match("^%s*(.-)%s*$")
-    if cmd ~= "" then out[#out + 1] = cmd end
+    if cmd ~= "" and cmd:lower():gsub("%s+", " ") ~= M.CLEAR then
+      out[#out + 1] = cmd
+    end
   end
+  -- Nothing to send is nothing sent; a clear alone would only cost the queue.
+  if M.config.clear and #out > 0 then table.insert(out, 1, M.CLEAR) end
   return out
 end
 
@@ -196,6 +211,13 @@ function M.setEnabled(on)
   M.save()
   log(M.statusLine())
   return M.config.enabled
+end
+
+function M.setClear(on)
+  M.config.clear = on and true or false
+  M.save()
+  log(M.statusLine())
+  return M.config.clear
 end
 
 function M.setSend(text)

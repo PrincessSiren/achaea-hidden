@@ -33,13 +33,20 @@ Drag `AchaeaHidden.xml` into Mudlet, or build `AchaeaHidden.mpackage` with
 | --- | --- |
 | `hidden` | whether it is on, what it sends, how often the line has been seen and acted on |
 | `hidden on\|off` | act on the line at all (on by default) |
-| `hidden send <a;b>` | the commands it sends, separated by semicolons |
+| `hidden clear on\|off` | send `clearqueue all` first, or leave the queue alone (on by default) |
+| `hidden send <a;b>` | the commands it sends after that, separated by semicolons |
 | `hidden gap <seconds>` | how long a repeat of the line is ignored for (2) |
 | `hidden diag` | build stamp, trigger count, where settings are saved |
 
 A `send` you have set is saved and kept across upgrades, so a new default does
-not replace it. `hidden send clearqueue all;queue add bal diagnose` is the
-current default.
+not replace it. `hidden send queue add bal diagnose` is the current default.
+
+`hidden clear` alone decides whether the queue is cleared. Up to 0.2.0
+`clearqueue all` was the first command in `send`, and a settings file saved by
+that version still holds it there; one found in `send` is dropped, so
+`hidden clear off` works on an upgraded install and `on` does not clear twice.
+With it off, whatever was queued stays queued and the diagnose joins it. That
+has not been run in a live client.
 
 The game has no command called `hidden`: sent past the alias, it answers
 "I'm sorry, I don't know what "hidden" does." So the prefix shadows nothing.
