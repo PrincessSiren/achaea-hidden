@@ -246,7 +246,7 @@ M.report(); M.diag()
 -- ---- a recompile leaves one trigger ---------------------------------------
 load()
 assert(liveTriggers() == 1, "recompiling must not leave a second trigger sending twice")
-assert(raise("sysUninstallPackage", "SomethingElse") == 1,
+assert(raise("sysUninstall", "SomethingElse") == 1,
        "and one uninstall handler, not one per load")
 
 -- ---- removing the package stops it ----------------------------------------
@@ -258,9 +258,9 @@ do
   assert(src:match('PACKAGE_NAME = "([^"]+)"') == M.PACKAGE,
          "the name the event is checked against is the one the package is built under")
 end
-raise("sysUninstallPackage", M.PACKAGE)
+raise("sysUninstall", M.PACKAGE)
 assert(liveTriggers() == 0, "removing this package kills the trigger")
-assert(raise("sysUninstallPackage", M.PACKAGE) == 0, "and the handler that did it")
+assert(raise("sysUninstall", M.PACKAGE) == 0, "and the handler that did it")
 -- A state table made by 0.3.0 has no handlers key; stop must not mind.
 M.state.handlers = nil
 M.stop()
