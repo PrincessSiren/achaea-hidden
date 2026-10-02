@@ -1,5 +1,8 @@
 # AchaeaHidden
 
+[![mpkg](https://img.shields.io/badge/mpkg-AchaeaHidden-blue)](https://packages.mudlet.org/packages/achaeahidden)
+[![release](https://img.shields.io/github/v/release/PrincessSiren/achaea-hidden)](../../releases/latest)
+
 When a venom gives you an affliction without saying which, clear the queue and
 diagnose.
 
