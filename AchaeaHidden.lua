@@ -28,11 +28,14 @@ working. The two do not conflict.
 
 One hidden affliction can be told without a diagnose. Recklessness shows you
 full health and mana whatever you really have, and every bite on record costs
-health, so a bite followed by a full prompt is almost surely it. When the next
-GMCP Char.Vitals frame after the line reads hp == maxhp and mp == maxmp, it
-sends `curing predict recklessness` (HELP 13.7.8) so server-side curing eats
-the lobelia without waiting to be told. The check waits for that frame because
-the one in hand when the line fires was sent with the prompt before the bite.
+health, so a bite that leaves GMCP Char.Vitals reading hp == maxhp and
+mp == maxmp is almost surely it. Then it also sends `curing predict
+recklessness` (HELP 13.7.8), so server-side curing eats the lobelia without
+waiting to be told. The vitals are read on the line itself: Mudlet handles a
+GMCP frame the moment it arrives but holds the text until the prompt's GA, so
+by the time a trigger sees the line, the frame in hand is the prompt after the
+bite. Bleeding costs health too, so `You bleed <n> health.` with n over 50 is
+checked the same way; that is where Orion runs its own check.
 
 Seen working against a hunting script that clears and refills the `eb` queue
 on nearly every prompt: the diagnose waits in the balance queue, which that
@@ -86,7 +89,6 @@ M.state = M.state or {
   seen     = 0,     -- times the line arrived
   sent     = 0,     -- times it was acted on
   last     = nil,   -- when it was last acted on, M.now()
-  armed    = nil,   -- when a line asked for the next vitals frame, M.now()
   predicted = 0,    -- times recklessness was predicted
   loaded   = "none",
 }
@@ -97,6 +99,9 @@ local S = M.state
 -- line somebody else has appended to never fires.
 M.LINE = "You are confused as to the effects of the venom."
 M.PATTERN = [[^You are confused as to the effects of the venom\.]]
+-- Printed once per bleeding tick, after a `Health lost: <n> (raw).` line. No
+-- end anchor, for the same reason as the venom line.
+M.BLEED_PATTERN = [[^You bleed (\d+) health\.]]
 local function log(message, colour)
   cecho("<" .. (colour or "orange") .. ">[AchaeaHidden]<reset> " .. message .. "\n")
 end
@@ -188,41 +193,14 @@ function M.commands()
   return out
 end
 
---- Safe on any line: anything but the venom line does nothing.
-function M.onLine(text)
-  if type(text) ~= "string" or text:sub(1, #M.LINE) ~= M.LINE then return false end
-  S.seen = S.seen + 1
-  if not M.config.enabled then return false end
-  -- Armed on every line, inside the gap too: of two bites in one breath, the
-  -- second may be the one that brought recklessness.
-  local now = M.now()
-  if M.config.reckless then S.armed = now end
-  -- Two bites in one breath want one diagnose, not two fighting over the queue.
-  if S.last and now - S.last < (tonumber(M.config.gap) or 0) then return false end
-  local commands = M.commands()
-  if #commands == 0 then return false end
-  S.last = now
-  S.sent = S.sent + 1
-  -- A trigger's echo lands on the line that fired it, so the alert starts
-  -- with a newline of its own. It ends without one, and goes out before the
-  -- commands: Mudlet's echo of a sent command starts a new line by itself when
-  -- the last line is not empty (TConsole::printCommand), so a newline of ours
-  -- on either side of the sends is a blank line. Sending first and echoing
-  -- "\n" after was seen to print one; this order was watched live and prints
-  -- none.
-  cecho("\n<orange>[AchaeaHidden]<reset> hidden affliction: " ..
-        table.concat(commands, ", "))
-  for _, cmd in ipairs(commands) do send(cmd) end
-  return true
-end
-
 -- ----------------------------------------------------------------- recklessness
 
 M.RECKLESS = "curing predict recklessness"
--- How long an armed check waits for its frame. The frame comes with the
--- prompt that ends the bite, well inside this; a frame later than it is some
--- other prompt's, and full vitals then say nothing about the bite.
-M.RECKLESS_WINDOW = 3
+-- A bleed has to be worth more than this to be checked. Orion's threshold,
+-- kept: a small tick and a regeneration tick in the same prompt could cancel
+-- and leave a prompt full for an honest reason. Eleven ticks are on record,
+-- 7 to 60, and every one took exactly its amount off its prompt.
+M.BLEED_MIN = 50
 
 --- Whether a Char.Vitals table reads full health and full mana. Achaea sends
 --- the numbers as strings, so they are read through tonumber.
@@ -236,27 +214,65 @@ function M.fullVitals(v)
   return hp == maxhp and mp == maxmp
 end
 
---- The gmcp.Char.Vitals handler. Does nothing unless a venom line armed it,
---- and disarms on the first frame either way: one bite, one look.
-function M.onVitals()
-  local armed = S.armed
-  if not armed then return false end
-  S.armed = nil
+--- Whether the vitals in hand say recklessness, with the switches on. Called
+--- from a trigger, where the frame in hand is already this prompt's: cTelnet
+--- raises a GMCP event as soon as it reads the subnegotiation, and passes the
+--- text to the trigger engine only at the GA that ends the prompt (both at
+--- Mudlet-4.22.0 and 5.0.1). Orion's own echoes from GMCP handlers print
+--- above the lines they arrived with, which is the same ordering seen live.
+function M.reckless()
   if not (M.config.enabled and M.config.reckless) then return false end
-  if M.now() - armed > M.RECKLESS_WINDOW then return false end
-  local v = gmcp and gmcp.Char and gmcp.Char.Vitals
-  if not M.fullVitals(v) then return false end
-  S.predicted = (S.predicted or 0) + 1
-  -- Outside a trigger, so not the venom line's newline rule: start a line
-  -- only if the current one has text on it, the way Orion's own echoes do.
-  local fresh = "\n"
-  if type(moveCursorEnd) == "function" and type(getCurrentLine) == "function" then
-    pcall(moveCursorEnd)
-    local ok, current = pcall(getCurrentLine)
-    if ok and current == "" then fresh = "" end
+  return M.fullVitals(gmcp and gmcp.Char and gmcp.Char.Vitals)
+end
+
+--- Safe on any line: anything but the venom line does nothing.
+function M.onLine(text)
+  if type(text) ~= "string" or text:sub(1, #M.LINE) ~= M.LINE then return false end
+  S.seen = S.seen + 1
+  if not M.config.enabled then return false end
+  local now = M.now()
+  local out = {}
+  -- Two bites in one breath want one diagnose, not two fighting over the
+  -- queue. The recklessness check is not held back by that: the second bite
+  -- may be the one that brought it.
+  if not (S.last and now - S.last < (tonumber(M.config.gap) or 0)) then
+    out = M.commands()
+    if #out > 0 then
+      S.last = now
+      S.sent = S.sent + 1
+    end
   end
-  cecho(fresh .. "<orange>[AchaeaHidden]<reset> full health and mana after the bite: " ..
-        M.RECKLESS)
+  local diagnosing = #out > 0
+  local predict = M.reckless()
+  if predict then
+    S.predicted = (S.predicted or 0) + 1
+    out[#out + 1] = M.RECKLESS
+  end
+  if #out == 0 then return false end
+  -- A trigger's echo lands on the line that fired it, so the alert starts
+  -- with a newline of its own. It ends without one, and goes out before the
+  -- commands: Mudlet's echo of a sent command starts a new line by itself when
+  -- the last line is not empty (TConsole::printCommand), so a newline of ours
+  -- on either side of the sends is a blank line. Sending first and echoing
+  -- "\n" after was seen to print one; this order was watched live and prints
+  -- none.
+  local what = diagnosing and "hidden affliction: " or "full health and mana after the bite: "
+  local said = table.concat(out, ", ")
+  if diagnosing and predict then
+    said = said .. " (full health and mana after the bite)"
+  end
+  cecho("\n<orange>[AchaeaHidden]<reset> " .. what .. said)
+  for _, cmd in ipairs(out) do send(cmd) end
+  return diagnosing
+end
+
+--- The bleeding line, with the amount the trigger captured.
+function M.onBleed(amount)
+  local n = tonumber(amount)
+  if not (n and n > M.BLEED_MIN) then return false end
+  if not M.reckless() then return false end
+  S.predicted = (S.predicted or 0) + 1
+  cecho("\n<orange>[AchaeaHidden]<reset> full health and mana after bleeding: " .. M.RECKLESS)
   send(M.RECKLESS)
   return true
 end
@@ -329,8 +345,9 @@ function M.diag()
   log("AchaeaHidden " .. M.VERSION .. " build " .. M.BUILD)
   echo("  " .. M.statusLine() .. "\n")
   echo("  pattern:   " .. M.PATTERN .. "\n")
+  echo("  bleeding:  " .. M.BLEED_PATTERN .. " (over " .. M.BLEED_MIN .. ")\n")
   echo("  gap:       " .. tostring(M.config.gap) .. "s\n")
-  echo("  triggers:  " .. #S.triggers .. " (1 is right; more means a second copy)\n")
+  echo("  triggers:  " .. #S.triggers .. " (2 is right; more means a second copy)\n")
   echo("  settings:  " .. M.path() .. " (" .. S.loaded .. ")\n")
 end
 
@@ -368,10 +385,10 @@ function M.start()
   M.stop()
   S.triggers = {
     tempRegexTrigger(M.PATTERN, function() M.onLine(line) end),
+    tempRegexTrigger(M.BLEED_PATTERN, function() M.onBleed(matches[2]) end),
   }
   S.handlers = {
     registerAnonymousEventHandler("sysUninstall", M.onUninstall),
-    registerAnonymousEventHandler("gmcp.Char.Vitals", function() M.onVitals() end),
   }
   return true
 end

@@ -25,6 +25,7 @@ inside two seconds sends nothing more. It is not gated on a class.
 
 It also looks at the prompt that follows. If that reads full health **and**
 full mana, the bite has almost certainly given you recklessness, and it sends
+the line below. A bleeding tick of more than 50 health is checked the same way.
 
 ```
 curing predict recklessness
@@ -52,7 +53,7 @@ attached to it is built from that tag. `hidden diag` prints the build stamp
 | `hidden clear on\|off` | send `clearqueue all` first, or leave the queue alone (on by default) |
 | `hidden send <a;b>` | the commands it sends after that, separated by semicolons |
 | `hidden gap <seconds>` | how long a repeat of the line is ignored for (2) |
-| `hidden reckless on\|off` | predict recklessness when the prompt after a bite reads full (on by default) |
+| `hidden reckless on\|off` | predict recklessness when the prompt after a bite or a bleed reads full (on by default) |
 | `hidden diag` | build stamp, trigger count, where settings are saved |
 
 A `send` you have set is saved and kept across upgrades, so a new default does
@@ -100,18 +101,32 @@ read `H:4060|100% M:4994|100%` through both bites and through a toxic relapse.
 Then curing touched the tree, the game printed "Prudence rules your psyche
 once again.", and the very next prompt read `H:1920|47%`.
 
-So, on the venom line, the package waits for the **next** GMCP `Char.Vitals`
-frame and checks `hp == maxhp` and `mp == maxmp`. If both are true it sends
+So on the venom line the package reads GMCP `Char.Vitals` and checks
+`hp == maxhp` and `mp == maxmp`. If both are true it also sends
 `CURING PREDICT <affliction>` ("Tell the system that you think you have an
-affliction", `HELP 13.7.8`). It does not check the vitals at the moment the
-line fires. Those came with the prompt *before* the bite, and four bites on
-record started at full health and mana and then dropped to between 3538 and
-3791. Checking then would have predicted all four.
+affliction", `HELP 13.7.8`), on the same alert as the diagnose.
 
-The check is spent on the first frame, with or without a prediction, and
-lapses after three seconds. A second bite inside the gap sends no second
-diagnose but is still checked, since it may be the one that brought
-recklessness. `hidden off` stops this along with everything else.
+The vitals it reads are the ones printed on the prompt *below* the line, not
+the one above it. Mudlet handles a GMCP frame as soon as it arrives, but
+holds the text back until the game's end-of-prompt marker. By the time any
+trigger sees the line, the frame from that prompt is already in hand. That
+is Mudlet's telnet code at both 4.22.0 and 5.0.1, and it is why Orion's own
+GMCP echoes print above the lines they arrived with. Four bites on record
+came right after a full prompt and left 3538 to 3791 below the line, and
+none of them predicts.
+
+A second bite inside the gap sends no second diagnose but is still checked,
+since it may be the one that brought recklessness. `hidden off` stops this
+along with everything else.
+
+**Bleeding is checked the same way.** `You bleed <n> health.` costs health
+just as a bite does, so when `n` is over 50 the vitals are checked on that
+line too. Eleven bleeding ticks are on record, from 7 to 60, and each took
+exactly its amount off its prompt. The threshold is the one Orion uses for
+its own check on this line. A small tick could be cancelled out by a
+regeneration tick in the same prompt, leaving the prompt full for an honest
+reason. That has not been seen, and no bleed while reckless has been
+captured either.
 
 Not yet verified:
 
@@ -123,9 +138,9 @@ Not yet verified:
   lobelia for an affliction you do not have. A miss needs a bite that does no
   damage, or one that lands exactly as health regenerates back to full, and
   neither has been seen.
-- **Where the alert line lands.** It is printed from a GMCP handler, not a
-  trigger. It starts a new line only if the current one has text, which is
-  what Orion's echoes do. It has not been watched live.
+- **That the frame always comes with the text.** If a prompt's text were
+  split across two network reads, the second half could reach the triggers
+  before that prompt's vitals do. No capture shows that happening.
 
 ## If you run Orion
 
@@ -134,10 +149,11 @@ on, it tries six symptom checks: hold breath for asthma, touch mindseye for
 paralysis, and so on. That finds those six and nothing else. The two packages
 do not conflict.
 
-Orion also has a recklessness check of its own (`ori.ssc.recklessCheck`), but
-on this line it runs only when the vitals *before* the bite were short on
+Orion also has a recklessness check of its own (`ori.ssc.recklessCheck`). On
+the venom line it runs only when the vitals *before* the bite were short on
 both health and mana. Mana is nearly always full while hunting, so in practice
-it never fires here. If it does, both packages send the same prediction.
+it never fires there. On the bleeding line it makes the same check as this
+package, so on a reckless bleed both send the same prediction.
 What the game does with a second prediction of the same affliction has not
 been seen.
 
