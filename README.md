@@ -21,8 +21,17 @@ queue add bal diagnose
 
 and says so on a line of its own. The diagnose runs as soon as you have
 balance: at once if you have it, otherwise when it returns. A second bite
-inside two seconds sends nothing more. That is all it does. It is not gated on
-a class.
+inside two seconds sends nothing more. It is not gated on a class.
+
+It also looks at the prompt that follows. If that reads full health **and**
+full mana, the bite has almost certainly given you recklessness, and it sends
+
+```
+curing predict recklessness
+```
+
+so server-side curing treats it without waiting for the diagnose. See
+[Recklessness](#recklessness) below.
 
 ## Install
 
@@ -43,6 +52,7 @@ attached to it is built from that tag. `hidden diag` prints the build stamp
 | `hidden clear on\|off` | send `clearqueue all` first, or leave the queue alone (on by default) |
 | `hidden send <a;b>` | the commands it sends after that, separated by semicolons |
 | `hidden gap <seconds>` | how long a repeat of the line is ignored for (2) |
+| `hidden reckless on\|off` | predict recklessness when the prompt after a bite reads full (on by default) |
 | `hidden diag` | build stamp, trigger count, where settings are saved |
 
 A `send` you have set is saved and kept across upgrades, so a new default does
@@ -77,12 +87,59 @@ and is not written over.
   does not say and the game does: sent off balance it answers "You must
   regain balance first."
 
+## Recklessness
+
+Recklessness makes your prompt show full health and mana, whatever you
+really have. That makes it the one hidden
+affliction you can spot without a diagnose, because a bite always costs health.
+Every bite on record took 200 to 640 health off the next prompt, except for
+the ones that left it reading exactly full.
+
+The clearest capture is two giant vampire spider bites in a row. The prompt
+read `H:4060|100% M:4994|100%` through both bites and through a toxic relapse.
+Then curing touched the tree, the game printed "Prudence rules your psyche
+once again.", and the very next prompt read `H:1920|47%`.
+
+So, on the venom line, the package waits for the **next** GMCP `Char.Vitals`
+frame and checks `hp == maxhp` and `mp == maxmp`. If both are true it sends
+`CURING PREDICT <affliction>` ("Tell the system that you think you have an
+affliction", `HELP 13.7.8`). It does not check the vitals at the moment the
+line fires. Those came with the prompt *before* the bite, and four bites on
+record started at full health and mana and then dropped to between 3538 and
+3791. Checking then would have predicted all four.
+
+The check is spent on the first frame, with or without a prediction, and
+lapses after three seconds. A second bite inside the gap sends no second
+diagnose but is still checked, since it may be the one that brought
+recklessness. `hidden off` stops this along with everything else.
+
+Not yet verified:
+
+- **That GMCP is fooled the same way the prompt is.** The captures show the
+  prompt. Orion's own recklessness check reads GMCP vitals and compares them
+  the same way, which suggests GMCP is pinned too, but that is a script
+  author's belief, not a capture.
+- **What a prediction costs when it is wrong.** Curing would presumably eat
+  lobelia for an affliction you do not have. A miss needs a bite that does no
+  damage, or one that lands exactly as health regenerates back to full, and
+  neither has been seen.
+- **Where the alert line lands.** It is printed from a GMCP handler, not a
+  trigger. It starts a new line only if the current one has text, which is
+  what Orion's echoes do. It has not been watched live.
+
 ## If you run Orion
 
 Orion triggers on the same line and does not diagnose. With `ori hiddenchecks`
 on, it tries six symptom checks: hold breath for asthma, touch mindseye for
 paralysis, and so on. That finds those six and nothing else. The two packages
 do not conflict.
+
+Orion also has a recklessness check of its own (`ori.ssc.recklessCheck`), but
+on this line it runs only when the vitals *before* the bite were short on
+both health and mana. Mana is nearly always full while hunting, so in practice
+it never fires here. If it does, both packages send the same prediction.
+What the game does with a second prediction of the same affliction has not
+been seen.
 
 ## What a live run shows
 

@@ -243,11 +243,120 @@ assert(not ECHOED[#ECHOED]:find("ignored", 1, true), "and a send without one say
 M.COMMANDS = { { usage = "hidden", help = "this list" } }
 M.report(); M.diag()
 
+-- ---- recklessness, read off the prompt after the bite --------------------
+-- Vitals as Achaea sends them, strings, with the numbers from the captures in
+-- the evidence corpus: 4060 health and 4994 mana at full. In the giant vampire
+-- spider capture the prompt read 4060|100% through two bites and a relapse,
+-- until "Prudence rules your psyche once again." and then 1920|47%.
+local function vitals(hp, mp)
+  return { hp = tostring(hp), maxhp = "4060", mp = tostring(mp), maxmp = "4994" }
+end
+local function frame(v)
+  gmcp = { Char = { Vitals = v } }
+  return raise("gmcp.Char.Vitals")
+end
+assert(M.CONFIG_DEFAULTS.reckless == true and M.config.reckless == true,
+       "recklessness is predicted unless that is turned off")
+clock = clock + 5
+SENT, ORDER = {}, {}
+local predicted = M.state.predicted
+
+-- Full *before* the bite is not the signal: that frame came with the prompt
+-- ahead of it. Four bites on record started at full and the next prompt read
+-- 3538 to 3791, so testing on the line itself would predict on all four.
+gmcp = { Char = { Vitals = vitals(4060, 4994) } }
+line = M.LINE
+trigger.fn()
+assert(#SENT == 2 and SENT[2] == "queue add bal diagnose", "the line itself only diagnoses")
+assert(frame(vitals(3538, 4994)) == 1, "one vitals handler")
+assert(#SENT == 2 and M.state.predicted == predicted,
+       "full before the bite and short after it predicts nothing")
+assert(frame(vitals(4060, 4994)) == 1 and #SENT == 2,
+       "the check is spent on the first frame, so a later full one is no bite's")
+
+-- The bite that left the prompt full.
+clock = clock + 5
+SENT, ORDER = {}, {}
+trigger.fn()
+assert(frame(vitals(4060, 4994)) == 1)
+assert(#SENT == 3 and SENT[3] == M.RECKLESS and M.RECKLESS == "curing predict recklessness",
+       "full health and full mana after the bite predicts recklessness")
+assert(table.concat(ORDER, " ") == "echo send send echo send",
+       "with an alert of its own ahead of it")
+assert(ECHOED[#ECHOED]:find("curing predict recklessness", 1, true))
+assert(M.state.predicted == predicted + 1, "and it is counted")
+assert(M.statusLine():find("(" .. (predicted + 1) .. " so far)", 1, true))
+frame(vitals(4060, 4994))
+assert(#SENT == 3, "once per bite")
+
+-- A second bite inside the gap sends no second diagnose, but still looks.
+clock = clock + 1
+trigger.fn()
+assert(#SENT == 3, "the gap holds back the diagnose")
+frame(vitals(4060, 4994))
+assert(#SENT == 4 and SENT[4] == M.RECKLESS, "and not the look at the next prompt")
+
+-- Health full and mana short is not the signature; nor is the reverse.
+for _, v in ipairs({ vitals(4060, 4934), vitals(3925, 4994) }) do
+  clock = clock + 5
+  SENT = {}
+  trigger.fn()
+  frame(v)
+  assert(#SENT == 2, "both have to read full")
+end
+-- Numbers rather than strings read the same; missing or empty ones read as not full.
+assert(M.fullVitals({ hp = 10, maxhp = 10, mp = 5, maxmp = 5 }) == true)
+assert(M.fullVitals({ hp = "10", maxhp = "10" }) == false)
+assert(M.fullVitals({ hp = "0", maxhp = "0", mp = "0", maxmp = "0" }) == false)
+assert(M.fullVitals(nil) == false and M.fullVitals("H:4060") == false)
+
+-- A frame with no line before it, and a frame too late to be the bite's.
+SENT = {}
+frame(vitals(4060, 4994))
+assert(#SENT == 0, "unarmed, a full prompt is just a full prompt")
+clock = clock + 5
+trigger.fn()
+SENT = {}
+clock = clock + M.RECKLESS_WINDOW + 1
+frame(vitals(4060, 4994))
+assert(#SENT == 0, "an armed check expires")
+gmcp = nil
+clock = clock + 5
+trigger.fn()
+SENT = {}
+assert(frame(nil) == 1 and #SENT == 0, "no gmcp table is no prediction and no error")
+
+-- The switch, and the master switch over it.
+clock = clock + 5
+M.setReckless(false)
+assert(SAVED.reckless == false, "the switch is saved")
+assert(M.statusLine():find("not predicted", 1, true))
+trigger.fn()
+SENT = {}
+frame(vitals(4060, 4994))
+assert(#SENT == 0, "off, nothing is predicted")
+M.setReckless(true)
+M.setEnabled(false)
+clock = clock + 5
+trigger.fn()
+frame(vitals(4060, 4994))
+assert(#SENT == 0, "and `hidden off` stops this as well")
+M.setEnabled(true)
+-- A state table from 0.3.1 has no counter.
+M.state.predicted = nil
+clock = clock + 5
+trigger.fn()
+SENT = {}
+frame(vitals(4060, 4994))
+assert(#SENT == 1 and M.state.predicted == 1, "a recompile over 0.3.1's state counts from one")
+gmcp = nil
+
 -- ---- a recompile leaves one trigger ---------------------------------------
 load()
 assert(liveTriggers() == 1, "recompiling must not leave a second trigger sending twice")
 assert(raise("sysUninstall", "SomethingElse") == 1,
        "and one uninstall handler, not one per load")
+assert(raise("gmcp.Char.Vitals") == 1, "and one vitals handler")
 
 -- ---- removing the package stops it ----------------------------------------
 -- Mudlet removes the aliases and the script and leaves a temp trigger alone,
@@ -261,6 +370,7 @@ end
 raise("sysUninstall", M.PACKAGE)
 assert(liveTriggers() == 0, "removing this package kills the trigger")
 assert(raise("sysUninstall", M.PACKAGE) == 0, "and the handler that did it")
+assert(raise("gmcp.Char.Vitals") == 0, "and the vitals handler")
 -- A state table made by 0.3.0 has no handlers key; stop must not mind.
 M.state.handlers = nil
 M.stop()
