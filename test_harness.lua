@@ -24,7 +24,11 @@ table.load = function(_, into)
   if RAISE_ON_LOAD then error("unexpected symbol") end
   for key, value in pairs(STORED) do into[key] = value end
 end
+-- Mudlet's table.save returns nothing when it worked and nil plus a message
+-- when the file could not be opened; it does not raise. The stub does the same.
+local SAVE_FAILS = false
 table.save = function(_, t)
+  if SAVE_FAILS then return nil, "Permission denied" end
   SAVED = {}
   for key, value in pairs(t) do SAVED[key] = value end
 end
@@ -42,6 +46,20 @@ function tempRegexTrigger(re, fn)
   return seq
 end
 function killTrigger(id) TRIGGERS[id] = nil end
+local HANDLERS = {}
+function registerAnonymousEventHandler(event, fn)
+  seq = seq + 1
+  HANDLERS[seq] = { event = event, fn = fn }
+  return seq
+end
+function killAnonymousEventHandler(id) HANDLERS[id] = nil end
+local function raise(event, ...)
+  local n = 0
+  for _, h in pairs(HANDLERS) do
+    if h.event == event then n = n + 1; h.fn(event, ...) end
+  end
+  return n
+end
 local function liveTriggers()
   local n = 0
   for _ in pairs(TRIGGERS) do n = n + 1 end
@@ -228,8 +246,41 @@ M.report(); M.diag()
 -- ---- a recompile leaves one trigger ---------------------------------------
 load()
 assert(liveTriggers() == 1, "recompiling must not leave a second trigger sending twice")
+assert(raise("sysUninstallPackage", "SomethingElse") == 1,
+       "and one uninstall handler, not one per load")
+
+-- ---- removing the package stops it ----------------------------------------
+-- Mudlet removes the aliases and the script and leaves a temp trigger alone,
+-- so without this the package goes on clearing the queue with no `hidden off`.
+assert(liveTriggers() == 1, "somebody else's package being removed changes nothing")
+do
+  local src = assert(io.open(HERE .. "/build.py")):read("*a")
+  assert(src:match('PACKAGE_NAME = "([^"]+)"') == M.PACKAGE,
+         "the name the event is checked against is the one the package is built under")
+end
+raise("sysUninstallPackage", M.PACKAGE)
+assert(liveTriggers() == 0, "removing this package kills the trigger")
+assert(raise("sysUninstallPackage", M.PACKAGE) == 0, "and the handler that did it")
+-- A state table made by 0.3.0 has no handlers key; stop must not mind.
+M.state.handlers = nil
+M.stop()
+M.start()
+assert(liveTriggers() == 1, "start brings it back, as an upgrade does")
 M.stop()
 assert(liveTriggers() == 0, "stop removes it")
+
+-- ---- a save that fails says so --------------------------------------------
+SAVE_FAILS, SAVED, ECHOED = true, nil, {}
+assert(M.save() == false and SAVED == nil, "a file that cannot be written is reported")
+M.setEnabled(false)
+local said = false
+for _, text in ipairs(ECHOED) do
+  if text:find("could not write", 1, true) then said = true end
+end
+assert(said, "and the command that changed the setting says it was not kept")
+SAVE_FAILS = false
+M.setEnabled(true)
+assert(SAVED.enabled == true, "a save that works still returns true and writes")
 
 -- ---- an unreadable file is moved aside, never written over ----------------
 RAISE_ON_LOAD = true

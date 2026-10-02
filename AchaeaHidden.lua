@@ -43,7 +43,7 @@ script leaves alone, and runs when balance returns, ahead of the attack.
 AchaeaHidden = AchaeaHidden or {}
 local M = AchaeaHidden
 
-M.VERSION = "0.3.0"
+M.VERSION = "0.3.1"
 M.BUILD = M.BUILD or "source"   -- build.py replaces this
 
 -- Settings, and the only keys a saved file is allowed to bring back. Filtered
@@ -129,7 +129,15 @@ function M.save()
   end
   local out = {}
   for key in pairs(CONFIG_DEFAULTS) do out[key] = M.config[key] end
-  pcall(table.save, path, out)
+  -- table.save reports a file it could not open by returning nil and a
+  -- message, not by raising, and returns nothing at all when it worked. So the
+  -- message is the only sign of a failure, and pcall's own result is not one.
+  local ok, _, failed = pcall(table.save, path, out)
+  if not ok or failed ~= nil then
+    log("could not write " .. path .. "; this setting lasts until Mudlet closes",
+        "red")
+    return false
+  end
   return true
 end
 
@@ -258,9 +266,28 @@ end
 
 -- --------------------------------------------------------------- start / stop
 
+-- The name Mudlet knows the package by, which is what its uninstall event
+-- carries. build.py has the same string; the harness holds the two together.
+M.PACKAGE = "AchaeaHidden"
+
 function M.stop()
   for _, id in ipairs(S.triggers) do pcall(killTrigger, id) end
   S.triggers = {}
+  -- `or {}`: the state table outlives a recompile, so one made by a version
+  -- that kept no handlers has no such key.
+  for _, id in ipairs(S.handlers or {}) do pcall(killAnonymousEventHandler, id) end
+  S.handlers = {}
+  return true
+end
+
+--- Removing the package takes its aliases and its script and leaves a temp
+--- trigger behind, still sending commands with no `hidden off` left to stop
+--- it. Mudlet raises this before it removes anything, for every package, so
+--- the name is checked. An upgrade is an uninstall and an install: the new
+--- copy's script starts it again.
+function M.onUninstall(_, name)
+  if name ~= M.PACKAGE then return false end
+  M.stop()
   return true
 end
 
@@ -268,6 +295,9 @@ function M.start()
   M.stop()
   S.triggers = {
     tempRegexTrigger(M.PATTERN, function() M.onLine(line) end),
+  }
+  S.handlers = {
+    registerAnonymousEventHandler("sysUninstallPackage", M.onUninstall),
   }
   return true
 end
