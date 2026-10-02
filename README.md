@@ -1,5 +1,8 @@
 # AchaeaHidden
 
+[![mpkg](https://img.shields.io/badge/mpkg-AchaeaHidden-blue)](https://packages.mudlet.org/packages/achaeahidden)
+[![release](https://img.shields.io/github/v/release/PrincessSiren/achaea-hidden)](../../releases/latest)
+
 When a venom gives you an affliction without saying which, clear the queue and
 diagnose.
 
@@ -23,8 +26,12 @@ a class.
 
 ## Install
 
-Drag `AchaeaHidden.xml` into Mudlet, or build `AchaeaHidden.mpackage` with
-`python3 build.py` and install that. `hidden diag` prints the build stamp
+In Mudlet, type `mpkg install AchaeaHidden`. Or install `AchaeaHidden.mpackage`
+from the [latest release](../../releases/latest), or build it yourself with
+`python3 build.py`.
+
+A release is one pinned version: it is tagged `v<version>`, and the `.mpackage`
+attached to it is built from that tag. `hidden diag` prints the build stamp
 `build.py` printed; if the two differ, Mudlet is running an older install.
 
 ## Commands
