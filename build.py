@@ -38,7 +38,7 @@ HELP_URL = SOURCE_URL
 # repository requires and its validator greps for. A constant rather than
 # today's date, because both build artefacts are byte-reproducible. Move it
 # when the version moves.
-CREATED = "2026-10-01"
+CREATED = "2026-10-02"
 LUA = HERE / "AchaeaHidden.lua"
 XML = HERE / "AchaeaHidden.xml"
 MPACKAGE = HERE / "AchaeaHidden.mpackage"
@@ -87,6 +87,13 @@ ALIASES: list[tuple[str, str, str, str, str]] = [
         "AchaeaHidden.setGap(matches[2])",
         "hidden gap <seconds>",
         "how long a repeat of the line is ignored for",
+    ),
+    (
+        "reckless",
+        r"^hidden\s+reckless\s+(on|off)$",
+        'AchaeaHidden.setReckless(matches[2] == "on")',
+        "hidden reckless on|off",
+        "predict recklessness when the prompt after a bite reads full",
     ),
     (
         "diag",

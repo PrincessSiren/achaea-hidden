@@ -26,6 +26,14 @@ Orion triggers on the same line and never diagnoses: it arms six symptom
 checks (`ori hiddenchecks`) and counts in a counter its own comment calls not
 working. The two do not conflict.
 
+One hidden affliction can be told without a diagnose. Recklessness shows you
+full health and mana whatever you really have, and every bite on record costs
+health, so a bite followed by a full prompt is almost surely it. When the next
+GMCP Char.Vitals frame after the line reads hp == maxhp and mp == maxmp, it
+sends `curing predict recklessness` (HELP 13.7.8) so server-side curing eats
+the lobelia without waiting to be told. The check waits for that frame because
+the one in hand when the line fires was sent with the prompt before the bite.
+
 Seen working against a hunting script that clears and refills the `eb` queue
 on nearly every prompt: the diagnose waits in the balance queue, which that
 script leaves alone, and runs when balance returns, ahead of the attack.
@@ -36,6 +44,7 @@ script leaves alone, and runs when balance returns, ahead of the attack.
   hidden clear on|off     send `clearqueue all` first, or leave the queue be
   hidden send <a;b>       the commands after that, separated by semicolons
   hidden gap <seconds>    how long a repeat of the line is ignored for
+  hidden reckless on|off  predict recklessness when a bite leaves vitals full
   hidden diag             build stamp, trigger count, where settings are saved
 
 ]]
@@ -43,7 +52,7 @@ script leaves alone, and runs when balance returns, ahead of the attack.
 AchaeaHidden = AchaeaHidden or {}
 local M = AchaeaHidden
 
-M.VERSION = "0.3.1"
+M.VERSION = "0.4.0"
 M.BUILD = M.BUILD or "source"   -- build.py replaces this
 
 -- Settings, and the only keys a saved file is allowed to bring back. Filtered
@@ -59,6 +68,8 @@ local CONFIG_DEFAULTS = {
   -- word in `send`, so it can be turned off without retyping the rest.
   clear   = true,
   gap     = 2,                          -- seconds in which a repeat is ignored
+  -- Predict recklessness when the prompt after the line shows full vitals.
+  reckless = true,
 }
 M.CONFIG_DEFAULTS = CONFIG_DEFAULTS
 
@@ -75,6 +86,8 @@ M.state = M.state or {
   seen     = 0,     -- times the line arrived
   sent     = 0,     -- times it was acted on
   last     = nil,   -- when it was last acted on, M.now()
+  armed    = nil,   -- when a line asked for the next vitals frame, M.now()
+  predicted = 0,    -- times recklessness was predicted
   loaded   = "none",
 }
 local S = M.state
@@ -180,8 +193,11 @@ function M.onLine(text)
   if type(text) ~= "string" or text:sub(1, #M.LINE) ~= M.LINE then return false end
   S.seen = S.seen + 1
   if not M.config.enabled then return false end
-  -- Two bites in one breath want one diagnose, not two fighting over the queue.
+  -- Armed on every line, inside the gap too: of two bites in one breath, the
+  -- second may be the one that brought recklessness.
   local now = M.now()
+  if M.config.reckless then S.armed = now end
+  -- Two bites in one breath want one diagnose, not two fighting over the queue.
   if S.last and now - S.last < (tonumber(M.config.gap) or 0) then return false end
   local commands = M.commands()
   if #commands == 0 then return false end
@@ -200,6 +216,51 @@ function M.onLine(text)
   return true
 end
 
+-- ----------------------------------------------------------------- recklessness
+
+M.RECKLESS = "curing predict recklessness"
+-- How long an armed check waits for its frame. The frame comes with the
+-- prompt that ends the bite, well inside this; a frame later than it is some
+-- other prompt's, and full vitals then say nothing about the bite.
+M.RECKLESS_WINDOW = 3
+
+--- Whether a Char.Vitals table reads full health and full mana. Achaea sends
+--- the numbers as strings, so they are read through tonumber.
+function M.fullVitals(v)
+  if type(v) ~= "table" then return false end
+  local hp, maxhp = tonumber(v.hp), tonumber(v.maxhp)
+  local mp, maxmp = tonumber(v.mp), tonumber(v.maxmp)
+  if not (hp and maxhp and mp and maxmp) or maxhp <= 0 or maxmp <= 0 then
+    return false
+  end
+  return hp == maxhp and mp == maxmp
+end
+
+--- The gmcp.Char.Vitals handler. Does nothing unless a venom line armed it,
+--- and disarms on the first frame either way: one bite, one look.
+function M.onVitals()
+  local armed = S.armed
+  if not armed then return false end
+  S.armed = nil
+  if not (M.config.enabled and M.config.reckless) then return false end
+  if M.now() - armed > M.RECKLESS_WINDOW then return false end
+  local v = gmcp and gmcp.Char and gmcp.Char.Vitals
+  if not M.fullVitals(v) then return false end
+  S.predicted = (S.predicted or 0) + 1
+  -- Outside a trigger, so not the venom line's newline rule: start a line
+  -- only if the current one has text on it, the way Orion's own echoes do.
+  local fresh = "\n"
+  if type(moveCursorEnd) == "function" and type(getCurrentLine) == "function" then
+    pcall(moveCursorEnd)
+    local ok, current = pcall(getCurrentLine)
+    if ok and current == "" then fresh = "" end
+  end
+  cecho(fresh .. "<orange>[AchaeaHidden]<reset> full health and mana after the bite: " ..
+        M.RECKLESS)
+  send(M.RECKLESS)
+  return true
+end
+
 -- ------------------------------------------------------------------- commands
 
 --- The one renderer for "is this on, and what does it do".
@@ -207,7 +268,9 @@ function M.statusLine()
   local commands = M.commands()
   return "status: " .. (M.config.enabled and "ON" or "OFF") .. ", sends " ..
          (#commands > 0 and table.concat(commands, ", ") or "nothing") ..
-         " - line seen " .. S.seen .. ", acted on " .. S.sent
+         " - line seen " .. S.seen .. ", acted on " .. S.sent ..
+         "; recklessness " .. (M.config.reckless and "predicted on full vitals" or "not predicted") ..
+         " (" .. (S.predicted or 0) .. " so far)"
 end
 
 function M.report()
@@ -229,6 +292,13 @@ function M.setClear(on)
   M.save()
   log(M.statusLine())
   return M.config.clear
+end
+
+function M.setReckless(on)
+  M.config.reckless = on and true or false
+  M.save()
+  log(M.statusLine())
+  return M.config.reckless
 end
 
 function M.setSend(text)
@@ -301,6 +371,7 @@ function M.start()
   }
   S.handlers = {
     registerAnonymousEventHandler("sysUninstall", M.onUninstall),
+    registerAnonymousEventHandler("gmcp.Char.Vitals", function() M.onVitals() end),
   }
   return true
 end
