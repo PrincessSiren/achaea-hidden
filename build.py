@@ -11,8 +11,8 @@ can be read in Mudlet's Editor, and ALIASES as the single source of truth for
 both the XML and the AchaeaHidden.COMMANDS table appended to the Lua, so the
 in-game help cannot drift from what is installed.
 
-The one trigger is not declared here. It is created at runtime with
-tempRegexTrigger, from the pattern in the .lua, so there is one copy of it.
+The two triggers are not declared here. They are created at runtime with
+tempRegexTrigger, from the patterns in the .lua, so there is one copy of each.
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ ALIASES: list[tuple[str, str, str, str, str]] = [
         r"^hidden\s+reckless\s+(on|off)$",
         'AchaeaHidden.setReckless(matches[2] == "on")',
         "hidden reckless on|off",
-        "predict recklessness when the prompt after a bite reads full",
+        "predict recklessness when the prompt after a bite or bleed reads full",
     ),
     (
         "diag",
