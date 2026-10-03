@@ -21,8 +21,18 @@ queue add bal diagnose
 
 and says so on a line of its own. The diagnose runs as soon as you have
 balance: at once if you have it, otherwise when it returns. A second bite
-inside two seconds sends nothing more. That is all it does. It is not gated on
-a class.
+inside two seconds sends nothing more. It is not gated on a class.
+
+It also looks at the prompt that follows. If that reads full health **and**
+full mana, the bite has almost certainly given you recklessness, and it sends
+the line below. A bleeding tick of more than 50 health is checked the same way.
+
+```
+curing predict recklessness
+```
+
+so server-side curing treats it without waiting for the diagnose. See
+[Recklessness](#recklessness) below.
 
 ## Install
 
@@ -43,6 +53,7 @@ attached to it is built from that tag. `hidden diag` prints the build stamp
 | `hidden clear on\|off` | send `clearqueue all` first, or leave the queue alone (on by default) |
 | `hidden send <a;b>` | the commands it sends after that, separated by semicolons |
 | `hidden gap <seconds>` | how long a repeat of the line is ignored for (2) |
+| `hidden reckless on\|off` | predict recklessness when the prompt after a bite or a bleed reads full (on by default) |
 | `hidden diag` | build stamp, trigger count, where settings are saved |
 
 A `send` you have set is saved and kept across upgrades, so a new default does
@@ -77,12 +88,104 @@ and is not written over.
   does not say and the game does: sent off balance it answers "You must
   regain balance first."
 
+## Recklessness
+
+Recklessness makes your prompt show full health and mana, whatever you
+really have. That makes it the one hidden affliction you can spot without a
+diagnose, because a bite always costs health. Every bite on record took 230
+to 640 health off its prompt, except for the ones that left it reading
+exactly full.
+
+The clearest capture is two giant vampire spider bites in a row. The prompt
+read `H:4060|100% M:4994|100%` through both bites and through a toxic relapse.
+Then curing touched the tree, the game printed "Prudence rules your psyche
+once again.", and the very next prompt read `H:1920|47%`. Another capture
+shows the signature from a prompt that was not full: a bite took 444 health
+off `H:4039|99%`, and the prompt after it read `H:4060|100% M:4994|100%`.
+
+So after the venom line the package reads GMCP `Char.Vitals` at the next
+prompt and checks `hp == maxhp` and `mp == maxmp`. If both are true it sends
+`CURING PREDICT <affliction>` ("Tell the system that you think you have an
+affliction", `HELP 13.7.8`) on an alert line of its own.
+
+**Why at the prompt and not on the line.** Mudlet handles a GMCP frame the
+moment it arrives. Text usually waits for the game's end-of-prompt marker,
+so the frame is normally in hand by the time a trigger sees the line. But
+when a network read ends partway through a prompt, Mudlet passes the text it
+has to the triggers straight away (`cTelnet::gotRest`, at both 4.22.0 and
+5.0.1). A trigger on the bite line would then read the vitals of the prompt
+*above* the bite, which are usually full, and predict recklessness that is
+not there. Three bites on record came right after a full prompt and left
+3420 to 3791 below the line. So the package sets up a one-shot prompt
+trigger on the line and reads the vitals there. Mudlet marks a line as the
+prompt only when it reads the GA, so by then every GMCP frame sent ahead of
+the GA has been handled. That Achaea sends the vitals frame ahead of the GA
+is its usual ordering rather than something captured; Orion's GMCP echoes
+printing above the lines they came with agree with it.
+
+**It needs Mudlet to see prompts.** Mudlet marks prompts from the game's GA
+signal, unless the profile has GA forced off. Then no prompt trigger fires,
+and the package drops a look that no prompt answers within five seconds
+without predicting anything. `hidden diag` counts the dropped looks, so a
+number above zero there means the check is not working in that profile.
+
+**Once, not every prompt.** While you are reckless every prompt reads full,
+so the package predicts once and then waits. It forgets the prediction when
+GMCP reports recklessness cured (`Char.Afflictions.Remove`, which Orion
+printed as "Cured Aff: recklessness" in the capture above, while the
+affliction was hidden), or when a prompt reads below full, which pinned
+vitals cannot, or when you log in again. If GMCP names recklessness outright
+(`Char.Afflictions.Add`, or a `Char.Afflictions.List` that includes it)
+there is nothing to predict.
+
+A second bite inside the gap sends no second diagnose but is still checked,
+since it may be the one that brought recklessness. A bite and a bleed in the
+same prompt are checked once. `hidden off` stops all of this along with
+everything else.
+
+**Bleeding is checked the same way.** `You bleed <n> health.` costs health
+just as a bite does, so when `n` is over 50 the next prompt is checked too.
+Eleven bleeding ticks are on record, from 7 to 60. Ten have a prompt after
+them, and each of those took exactly its amount off it; the eleventh is the
+last line of its capture. The threshold is the one Orion uses for its own
+check on this line. A small tick could be cancelled out by a regeneration
+tick in the same prompt, leaving the prompt full for an honest reason. That
+has not been seen, and no bleed while reckless has been captured either.
+
+Not yet verified:
+
+- **That GMCP is fooled the same way the prompt is.** The captures show the
+  prompt. Orion's own recklessness check reads GMCP vitals and compares them
+  the same way, which suggests GMCP is pinned too, but that is a script
+  author's belief, not a capture.
+- **What a prediction costs when it is wrong.** Curing would presumably eat
+  lobelia for an affliction you do not have. A miss needs a bite that does no
+  damage, or one that lands exactly as health regenerates back to full, and
+  neither has been seen.
+- **That a lobelia cure also sends `Char.Afflictions.Remove`.** The tree cure
+  is captured; the herb is not. If it does not, the next prompt below full
+  still clears the prediction. If recklessness ended with neither, and you
+  stayed at full health until you were made reckless again, that second time
+  would go unpredicted until a prompt dropped below full or you logged in.
+- **Where the alert lands.** It is printed from the prompt trigger, on the
+  prompt line, starting a line of its own the way the diagnose alert does.
+  The diagnose alert's layout was watched live; this one has not been.
+
 ## If you run Orion
 
 Orion triggers on the same line and does not diagnose. With `ori hiddenchecks`
 on, it tries six symptom checks: hold breath for asthma, touch mindseye for
 paralysis, and so on. That finds those six and nothing else. The two packages
 do not conflict.
+
+Orion also has a recklessness check of its own (`ori.ssc.recklessCheck`). On
+the venom line it runs only when the vitals *before* the bite were short on
+both health and mana. Mana is nearly always full while hunting, so in practice
+it never fires there. On the bleeding line it runs in the trigger, on the
+vitals in hand at that moment, and skips an affliction it has already
+predicted or been told about. So on a reckless bleed both packages can send
+the prediction, once each. What the game does with a second prediction of the
+same affliction has not been seen.
 
 ## What a live run shows
 

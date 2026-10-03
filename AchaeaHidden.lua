@@ -26,6 +26,22 @@ Orion triggers on the same line and never diagnoses: it arms six symptom
 checks (`ori hiddenchecks`) and counts in a counter its own comment calls not
 working. The two do not conflict.
 
+One hidden affliction can be told without a diagnose. Recklessness shows you
+full health and mana whatever you really have, and every bite on record costs
+health, so a bite whose prompt reads hp == maxhp and mp == maxmp in GMCP
+Char.Vitals is almost surely it. Then it also sends `curing predict
+recklessness` (HELP 13.7.8), so server-side curing eats the lobelia without
+waiting to be told. Bleeding costs health too, so `You bleed <n> health.` with
+n over 50 is checked the same way; that is where Orion runs its own check.
+
+The vitals are read at the prompt that follows, from a one-shot prompt
+trigger, not on the line: a line can reach the triggers before its prompt's
+GMCP frame has arrived. It is predicted once, and not again until GMCP says
+recklessness was cured, a prompt shows the vitals below full, or you log in
+again. A prompt trigger needs Mudlet to mark prompts, which it does from the
+game's GA unless the profile forces GA off; a look no prompt answers within
+five seconds is dropped, and `hidden diag` counts how many were.
+
 Seen working against a hunting script that clears and refills the `eb` queue
 on nearly every prompt: the diagnose waits in the balance queue, which that
 script leaves alone, and runs when balance returns, ahead of the attack.
@@ -36,6 +52,7 @@ script leaves alone, and runs when balance returns, ahead of the attack.
   hidden clear on|off     send `clearqueue all` first, or leave the queue be
   hidden send <a;b>       the commands after that, separated by semicolons
   hidden gap <seconds>    how long a repeat of the line is ignored for
+  hidden reckless on|off  predict recklessness when a bite leaves vitals full
   hidden diag             build stamp, trigger count, where settings are saved
 
 ]]
@@ -43,7 +60,7 @@ script leaves alone, and runs when balance returns, ahead of the attack.
 AchaeaHidden = AchaeaHidden or {}
 local M = AchaeaHidden
 
-M.VERSION = "0.3.1"
+M.VERSION = "0.4.0"
 M.BUILD = M.BUILD or "source"   -- build.py replaces this
 
 -- Settings, and the only keys a saved file is allowed to bring back. Filtered
@@ -59,6 +76,8 @@ local CONFIG_DEFAULTS = {
   -- word in `send`, so it can be turned off without retyping the rest.
   clear   = true,
   gap     = 2,                          -- seconds in which a repeat is ignored
+  -- Predict recklessness when the prompt after the line shows full vitals.
+  reckless = true,
 }
 M.CONFIG_DEFAULTS = CONFIG_DEFAULTS
 
@@ -75,6 +94,12 @@ M.state = M.state or {
   seen     = 0,     -- times the line arrived
   sent     = 0,     -- times it was acted on
   last     = nil,   -- when it was last acted on, M.now()
+  predicted = 0,    -- times recklessness was predicted
+  prompt   = nil,   -- the pending one-shot prompt trigger's id
+  watching = nil,   -- "bite" or "bleed": what that prompt is checked for
+  known    = false, -- recklessness predicted or reported, and not yet cured
+  promptTimer = nil, -- drops a look no prompt answers
+  expired  = 0,     -- looks dropped that way
   loaded   = "none",
 }
 local S = M.state
@@ -84,6 +109,9 @@ local S = M.state
 -- line somebody else has appended to never fires.
 M.LINE = "You are confused as to the effects of the venom."
 M.PATTERN = [[^You are confused as to the effects of the venom\.]]
+-- Printed once per bleeding tick, after a `Health lost: <n> (raw).` line. No
+-- end anchor, for the same reason as the venom line.
+M.BLEED_PATTERN = [[^You bleed (\d+) health\.]]
 local function log(message, colour)
   cecho("<" .. (colour or "orange") .. ">[AchaeaHidden]<reset> " .. message .. "\n")
 end
@@ -175,11 +203,141 @@ function M.commands()
   return out
 end
 
+-- ----------------------------------------------------------------- recklessness
+
+M.RECKLESS = "curing predict recklessness"
+-- A bleed has to be worth more than this to be checked. Orion's threshold,
+-- kept: a small tick and a regeneration tick in the same prompt could cancel
+-- and leave a prompt full for an honest reason. Eleven ticks are on record,
+-- 7 to 60, and the ten with a prompt after them each took exactly its amount.
+M.BLEED_MIN = 50
+
+--- Whether a Char.Vitals table reads full health and full mana. Achaea sends
+--- the numbers as strings, so they are read through tonumber.
+function M.fullVitals(v)
+  if type(v) ~= "table" then return false end
+  local hp, maxhp = tonumber(v.hp), tonumber(v.maxhp)
+  local mp, maxmp = tonumber(v.mp), tonumber(v.maxmp)
+  if not (hp and maxhp and mp and maxmp) or maxhp <= 0 or maxmp <= 0 then
+    return false
+  end
+  return hp == maxhp and mp == maxmp
+end
+
+local function on() return M.config.enabled and M.config.reckless end
+
+-- How long a look waits for a prompt before it is dropped. Prompts come
+-- with every block of output, so a look this old is one no prompt will
+-- answer: GA forced off in the profile, or the connection gone.
+M.PROMPT_WAIT = 5
+
+--- Ask for the vitals at the next prompt. Not read here: Mudlet raises a GMCP
+--- event as soon as it reads the frame, but text reaches the triggers either
+--- at the GA that ends the prompt or, when a network read ends mid-prompt,
+--- at the end of that read (cTelnet::gotRest once GA has been seen, at both
+--- Mudlet-4.22.0 and 5.0.1). In the second case the frame in hand on the line
+--- is the prompt *before* the bite, which is usually full. A line is marked
+--- as the prompt only when the GA itself is read (cTelnet::processSocketData
+--- pushes '\xff' there unless mFORCE_GA_OFF), so by the time the prompt
+--- trigger runs, every frame sent ahead of the GA has been handled. That the
+--- vitals frame comes ahead of the GA is Achaea's ordering, not a capture;
+--- Orion's GMCP echoes printing above the lines they came with agree with it.
+--- One prompt trigger covers a bite and a bleed in the same prompt.
+function M.watch(by)
+  if not on() then return false end
+  if S.watching ~= "bite" then S.watching = by end
+  if not S.prompt then
+    S.prompt = tempPromptTrigger(function() M.onPrompt() end, 1)
+    S.promptTimer = tempTimer(M.PROMPT_WAIT, function() M.expire() end)
+  end
+  return true
+end
+
+local function unwatch()
+  if S.prompt then pcall(killTrigger, S.prompt) end
+  if S.promptTimer then pcall(killTimer, S.promptTimer) end
+  S.prompt, S.promptTimer, S.watching = nil, nil, nil
+end
+
+--- No prompt came. Predicting here would read whatever frame is newest,
+--- which may be a later prompt healed back to full, so nothing is sent.
+function M.expire()
+  if not S.prompt then return false end
+  unwatch()
+  S.expired = (S.expired or 0) + 1
+  return true
+end
+
+--- The prompt after a bite or a bleed. Expires after one firing.
+function M.onPrompt()
+  local by = S.watching
+  if S.promptTimer then pcall(killTimer, S.promptTimer) end
+  S.prompt, S.promptTimer, S.watching = nil, nil, nil
+  if not by or not on() or S.known then return false end
+  if not M.fullVitals(gmcp and gmcp.Char and gmcp.Char.Vitals) then return false end
+  S.known = true
+  S.predicted = (S.predicted or 0) + 1
+  -- Inside a trigger, on the prompt line: the same newline rule as the
+  -- venom line's alert.
+  cecho("\n<orange>[AchaeaHidden]<reset> full health and mana after " ..
+        (by == "bleed" and "bleeding" or "the bite") .. ": " .. M.RECKLESS)
+  send(M.RECKLESS)
+  return true
+end
+
+--- Whether a GMCP affliction frame names recklessness. Remove arrives as a
+--- list of names (Orion iterates it that way, and printed "Cured Aff:
+--- recklessness" off one while it was hidden); Add as one { name = ... }.
+--- Either shape is taken for either, as Room.RemovePlayer taught.
+local function names(frame, aff)
+  if type(frame) == "string" then return frame == aff end
+  if type(frame) ~= "table" then return false end
+  if frame.name == aff then return true end
+  for _, entry in pairs(frame) do
+    if entry == aff or (type(entry) == "table" and entry.name == aff) then return true end
+  end
+  return false
+end
+
+--- Pinned vitals cannot read below full, so a frame that does says the
+--- recklessness predicted earlier is gone.
+function M.onVitals()
+  if S.known and not M.fullVitals(gmcp and gmcp.Char and gmcp.Char.Vitals) then
+    S.known = false
+  end
+end
+
+function M.onAffAdd()
+  local a = gmcp and gmcp.Char and gmcp.Char.Afflictions
+  if a and names(a.Add, "recklessness") then S.known = true end
+end
+
+--- A List naming it says it is known. One without it is not read as a cure:
+--- a prediction need not appear in the List, and forgetting on it would
+--- re-send the prediction while still reckless.
+function M.onAffList()
+  local a = gmcp and gmcp.Char and gmcp.Char.Afflictions
+  if a and names(a.List, "recklessness") then S.known = true end
+end
+
+--- A new login starts with nothing predicted.
+function M.onLogin()
+  S.known = false
+end
+
+function M.onAffRemove()
+  local a = gmcp and gmcp.Char and gmcp.Char.Afflictions
+  if a and names(a.Remove, "recklessness") then S.known = false end
+end
+
 --- Safe on any line: anything but the venom line does nothing.
 function M.onLine(text)
   if type(text) ~= "string" or text:sub(1, #M.LINE) ~= M.LINE then return false end
   S.seen = S.seen + 1
   if not M.config.enabled then return false end
+  -- Watched on every line, inside the gap too: of two bites in one breath,
+  -- the second may be the one that brought recklessness.
+  M.watch("bite")
   -- Two bites in one breath want one diagnose, not two fighting over the queue.
   local now = M.now()
   if S.last and now - S.last < (tonumber(M.config.gap) or 0) then return false end
@@ -200,6 +358,13 @@ function M.onLine(text)
   return true
 end
 
+--- The bleeding line, with the amount the trigger captured.
+function M.onBleed(amount)
+  local n = tonumber(amount)
+  if not (n and n > M.BLEED_MIN) then return false end
+  return M.watch("bleed")
+end
+
 -- ------------------------------------------------------------------- commands
 
 --- The one renderer for "is this on, and what does it do".
@@ -207,7 +372,9 @@ function M.statusLine()
   local commands = M.commands()
   return "status: " .. (M.config.enabled and "ON" or "OFF") .. ", sends " ..
          (#commands > 0 and table.concat(commands, ", ") or "nothing") ..
-         " - line seen " .. S.seen .. ", acted on " .. S.sent
+         " - line seen " .. S.seen .. ", acted on " .. S.sent ..
+         "; recklessness " .. (M.config.reckless and "predicted on full vitals" or "not predicted") ..
+         " (" .. (S.predicted or 0) .. " so far)"
 end
 
 function M.report()
@@ -229,6 +396,13 @@ function M.setClear(on)
   M.save()
   log(M.statusLine())
   return M.config.clear
+end
+
+function M.setReckless(on)
+  M.config.reckless = on and true or false
+  M.save()
+  log(M.statusLine())
+  return M.config.reckless
 end
 
 function M.setSend(text)
@@ -259,8 +433,13 @@ function M.diag()
   log("AchaeaHidden " .. M.VERSION .. " build " .. M.BUILD)
   echo("  " .. M.statusLine() .. "\n")
   echo("  pattern:   " .. M.PATTERN .. "\n")
+  echo("  bleeding:  " .. M.BLEED_PATTERN .. " (over " .. M.BLEED_MIN .. ")\n")
   echo("  gap:       " .. tostring(M.config.gap) .. "s\n")
-  echo("  triggers:  " .. #S.triggers .. " (1 is right; more means a second copy)\n")
+  echo("  triggers:  " .. #S.triggers .. " (2 is right; more means a second copy)\n")
+  echo("  reckless:  " .. (S.known and "predicted or reported, not yet cured" or "not known") ..
+       (S.prompt and "; checking the next prompt" or "") .. "\n")
+  echo("  dropped:   " .. (S.expired or 0) .. " looks no prompt answered in " ..
+       M.PROMPT_WAIT .. "s (more than none: is GA forced off?)\n")
   echo("  settings:  " .. M.path() .. " (" .. S.loaded .. ")\n")
 end
 
@@ -273,6 +452,7 @@ M.PACKAGE = "AchaeaHidden"
 function M.stop()
   for _, id in ipairs(S.triggers) do pcall(killTrigger, id) end
   S.triggers = {}
+  unwatch()
   -- `or {}`: the state table outlives a recompile, so one made by a version
   -- that kept no handlers has no such key.
   for _, id in ipairs(S.handlers or {}) do pcall(killAnonymousEventHandler, id) end
@@ -298,9 +478,15 @@ function M.start()
   M.stop()
   S.triggers = {
     tempRegexTrigger(M.PATTERN, function() M.onLine(line) end),
+    tempRegexTrigger(M.BLEED_PATTERN, function() M.onBleed(matches[2]) end),
   }
   S.handlers = {
     registerAnonymousEventHandler("sysUninstall", M.onUninstall),
+    registerAnonymousEventHandler("gmcp.Char.Vitals", function() M.onVitals() end),
+    registerAnonymousEventHandler("gmcp.Char.Afflictions.Add", function() M.onAffAdd() end),
+    registerAnonymousEventHandler("gmcp.Char.Afflictions.Remove", function() M.onAffRemove() end),
+    registerAnonymousEventHandler("gmcp.Char.Afflictions.List", function() M.onAffList() end),
+    registerAnonymousEventHandler("gmcp.Char.Name", function() M.onLogin() end),
   }
   return true
 end
