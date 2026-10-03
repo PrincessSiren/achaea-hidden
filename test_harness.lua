@@ -54,6 +54,20 @@ function tempPromptTrigger(fn, expiry)
   return seq
 end
 function killTrigger(id) TRIGGERS[id] = nil; PROMPTS[id] = nil end
+local TIMERS = {}
+function tempTimer(delay, fn)
+  assert(type(delay) == "number" and delay >= 0 and delay < 86400,
+         "5.0.1's tempTimer raises outside 0 to 86400")
+  seq = seq + 1
+  TIMERS[seq] = fn
+  return seq
+end
+function killTimer(id) TIMERS[id] = nil end
+local function pendingTimers()
+  local n = 0
+  for _ in pairs(TIMERS) do n = n + 1 end
+  return n
+end
 local function pendingPrompts()
   local n = 0
   for _ in pairs(PROMPTS) do n = n + 1 end
@@ -496,11 +510,42 @@ prompt(vitals(4060, 4994))
 assert(#SENT == 1 and M.state.predicted == 1, "a recompile over 0.3.1's state counts from one")
 affs("Remove", { "recklessness" })
 
--- Stopping with a look pending takes the prompt trigger with it.
+-- Stopping with a look pending takes the prompt trigger and its timer with it.
 bleed("You bleed 60 health.")
-assert(pendingPrompts() == 1)
+assert(pendingPrompts() == 1 and pendingTimers() == 1, "a look comes with a timer")
 M.stop()
-assert(pendingPrompts() == 0 and M.state.prompt == nil, "stop kills a pending prompt trigger")
+assert(pendingPrompts() == 0 and pendingTimers() == 0 and M.state.prompt == nil,
+       "stop kills a pending prompt trigger and its timer")
+M.start()
+
+-- A prompt answers the look and its timer goes with it.
+bleed("You bleed 60 health.")
+prompt(vitals(3599, 4994))
+assert(pendingTimers() == 0, "an answered look leaves no timer behind")
+
+-- With GA forced off in the profile, Mudlet marks no prompt and no prompt
+-- trigger fires. The timer drops the look, so the next bite gets one, and
+-- sends nothing: the newest frame may be a later prompt healed to full.
+local expired = M.state.expired
+SENT = {}
+bleed("You bleed 60 health.")
+frame(vitals(4060, 4994))
+for id, fn in pairs(TIMERS) do TIMERS[id] = nil; fn() end
+assert(pendingPrompts() == 0 and M.state.prompt == nil and M.state.expired == expired + 1,
+       "a look no prompt answered is dropped and counted")
+assert(#SENT == 0, "and predicts nothing")
+assert(M.expire() == false, "a timer that fires late finds nothing to drop")
+bleed("You bleed 60 health.")
+assert(pendingPrompts() == 1, "so the next line can look again")
+prompt(vitals(3599, 4994))
+
+-- A List naming it is a report; one without it is not a cure.
+affs("List", { { name = "recklessness" }, { name = "scytherus" } })
+assert(M.state.known == true, "a List naming recklessness makes it known")
+affs("List", { { name = "scytherus" } })
+assert(M.state.known == true, "a List without it does not forget a prediction")
+raise("gmcp.Char.Name")
+assert(M.state.known == false, "a login starts with nothing predicted")
 M.start()
 gmcp, matches = nil, nil
 

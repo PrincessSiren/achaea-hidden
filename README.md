@@ -116,16 +116,26 @@ has to the triggers straight away (`cTelnet::gotRest`, at both 4.22.0 and
 5.0.1). A trigger on the bite line would then read the vitals of the prompt
 *above* the bite, which are usually full, and predict recklessness that is
 not there. Three bites on record came right after a full prompt and left
-3420 to 3791 below the line. The prompt line itself always comes after its
-frame, so the package sets up a one-shot prompt trigger on the line and
-reads the vitals there.
+3420 to 3791 below the line. So the package sets up a one-shot prompt
+trigger on the line and reads the vitals there. Mudlet marks a line as the
+prompt only when it reads the GA, so by then every GMCP frame sent ahead of
+the GA has been handled. That Achaea sends the vitals frame ahead of the GA
+is its usual ordering rather than something captured; Orion's GMCP echoes
+printing above the lines they came with agree with it.
+
+**It needs Mudlet to see prompts.** Mudlet marks prompts from the game's GA
+signal, unless the profile has GA forced off. Then no prompt trigger fires,
+and the package drops a look that no prompt answers within five seconds
+without predicting anything. `hidden diag` counts the dropped looks, so a
+number above zero there means the check is not working in that profile.
 
 **Once, not every prompt.** While you are reckless every prompt reads full,
 so the package predicts once and then waits. It forgets the prediction when
 GMCP reports recklessness cured (`Char.Afflictions.Remove`, which Orion
 printed as "Cured Aff: recklessness" in the capture above, while the
 affliction was hidden), or when a prompt reads below full, which pinned
-vitals cannot. If GMCP names recklessness outright (`Char.Afflictions.Add`)
+vitals cannot, or when you log in again. If GMCP names recklessness outright
+(`Char.Afflictions.Add`, or a `Char.Afflictions.List` that includes it)
 there is nothing to predict.
 
 A second bite inside the gap sends no second diagnose but is still checked,
@@ -154,7 +164,12 @@ Not yet verified:
   neither has been seen.
 - **That a lobelia cure also sends `Char.Afflictions.Remove`.** The tree cure
   is captured; the herb is not. If it does not, the next prompt below full
-  still clears the prediction.
+  still clears the prediction. If recklessness ended with neither, and you
+  stayed at full health until you were made reckless again, that second time
+  would go unpredicted until a prompt dropped below full or you logged in.
+- **Where the alert lands.** It is printed from the prompt trigger, on the
+  prompt line, starting a line of its own the way the diagnose alert does.
+  The diagnose alert's layout was watched live; this one has not been.
 
 ## If you run Orion
 
