@@ -44,7 +44,10 @@ n over 50 is checked the same way; that is where Orion runs its own check.
 The vitals are read at the prompt that follows, from a one-shot prompt
 trigger, not on the line: a line can reach the triggers before its prompt's
 GMCP frame has arrived. It is predicted once, and not again until GMCP says
-recklessness was cured or a prompt shows the vitals below full.
+recklessness was cured, a prompt shows the vitals below full, or you log in
+again. A prompt trigger needs Mudlet to mark prompts, which it does from the
+game's GA unless the profile forces GA off; a look no prompt answers within
+five seconds is dropped, and `hidden diag` counts how many were.
 
 Seen working against a hunting script that clears and refills the `eb` queue
 on nearly every prompt: the diagnose waits in the balance queue, which that
@@ -102,6 +105,8 @@ M.state = M.state or {
   prompt   = nil,   -- the pending one-shot prompt trigger's id
   watching = nil,   -- "bite" or "bleed": what that prompt is checked for
   known    = false, -- recklessness predicted or reported, and not yet cured
+  promptTimer = nil, -- drops a look no prompt answers
+  expired  = 0,     -- looks dropped that way
   loaded   = "none",
 }
 local S = M.state
@@ -228,27 +233,53 @@ end
 
 local function on() return M.config.enabled and M.config.reckless end
 
+-- How long a look waits for a prompt before it is dropped. Prompts come
+-- with every block of output, so a look this old is one no prompt will
+-- answer: GA forced off in the profile, or the connection gone.
+M.PROMPT_WAIT = 5
+
 --- Ask for the vitals at the next prompt. Not read here: Mudlet raises a GMCP
 --- event as soon as it reads the frame, but text reaches the triggers either
 --- at the GA that ends the prompt or, when a network read ends mid-prompt,
 --- at the end of that read (cTelnet::gotRest once GA has been seen, at both
 --- Mudlet-4.22.0 and 5.0.1). In the second case the frame in hand on the line
---- is the prompt *before* the bite, which is usually full. By the prompt line
---- the frame has always arrived: Achaea sends it ahead of the prompt text.
+--- is the prompt *before* the bite, which is usually full. A line is marked
+--- as the prompt only when the GA itself is read (cTelnet::processSocketData
+--- pushes '\xff' there unless mFORCE_GA_OFF), so by the time the prompt
+--- trigger runs, every frame sent ahead of the GA has been handled. That the
+--- vitals frame comes ahead of the GA is Achaea's ordering, not a capture;
+--- Orion's GMCP echoes printing above the lines they came with agree with it.
 --- One prompt trigger covers a bite and a bleed in the same prompt.
 function M.watch(by)
   if not on() then return false end
   if S.watching ~= "bite" then S.watching = by end
   if not S.prompt then
     S.prompt = tempPromptTrigger(function() M.onPrompt() end, 1)
+    S.promptTimer = tempTimer(M.PROMPT_WAIT, function() M.expire() end)
   end
+  return true
+end
+
+local function unwatch()
+  if S.prompt then pcall(killTrigger, S.prompt) end
+  if S.promptTimer then pcall(killTimer, S.promptTimer) end
+  S.prompt, S.promptTimer, S.watching = nil, nil, nil
+end
+
+--- No prompt came. Predicting here would read whatever frame is newest,
+--- which may be a later prompt healed back to full, so nothing is sent.
+function M.expire()
+  if not S.prompt then return false end
+  unwatch()
+  S.expired = (S.expired or 0) + 1
   return true
 end
 
 --- The prompt after a bite or a bleed. Expires after one firing.
 function M.onPrompt()
   local by = S.watching
-  S.prompt, S.watching = nil, nil
+  if S.promptTimer then pcall(killTimer, S.promptTimer) end
+  S.prompt, S.promptTimer, S.watching = nil, nil, nil
   if not by or not on() or S.known then return false end
   if not M.fullVitals(gmcp and gmcp.Char and gmcp.Char.Vitals) then return false end
   S.known = true
@@ -286,6 +317,19 @@ end
 function M.onAffAdd()
   local a = gmcp and gmcp.Char and gmcp.Char.Afflictions
   if a and names(a.Add, "recklessness") then S.known = true end
+end
+
+--- A List naming it says it is known. One without it is not read as a cure:
+--- a prediction need not appear in the List, and forgetting on it would
+--- re-send the prediction while still reckless.
+function M.onAffList()
+  local a = gmcp and gmcp.Char and gmcp.Char.Afflictions
+  if a and names(a.List, "recklessness") then S.known = true end
+end
+
+--- A new login starts with nothing predicted.
+function M.onLogin()
+  S.known = false
 end
 
 function M.onAffRemove()
@@ -401,6 +445,8 @@ function M.diag()
   echo("  triggers:  " .. #S.triggers .. " (2 is right; more means a second copy)\n")
   echo("  reckless:  " .. (S.known and "predicted or reported, not yet cured" or "not known") ..
        (S.prompt and "; checking the next prompt" or "") .. "\n")
+  echo("  dropped:   " .. (S.expired or 0) .. " looks no prompt answered in " ..
+       M.PROMPT_WAIT .. "s (more than none: is GA forced off?)\n")
   echo("  settings:  " .. M.path() .. " (" .. S.loaded .. ")\n")
 end
 
@@ -413,8 +459,7 @@ M.PACKAGE = "AchaeaHidden"
 function M.stop()
   for _, id in ipairs(S.triggers) do pcall(killTrigger, id) end
   S.triggers = {}
-  if S.prompt then pcall(killTrigger, S.prompt) end
-  S.prompt, S.watching = nil, nil
+  unwatch()
   -- `or {}`: the state table outlives a recompile, so one made by a version
   -- that kept no handlers has no such key.
   for _, id in ipairs(S.handlers or {}) do pcall(killAnonymousEventHandler, id) end
@@ -447,6 +492,8 @@ function M.start()
     registerAnonymousEventHandler("gmcp.Char.Vitals", function() M.onVitals() end),
     registerAnonymousEventHandler("gmcp.Char.Afflictions.Add", function() M.onAffAdd() end),
     registerAnonymousEventHandler("gmcp.Char.Afflictions.Remove", function() M.onAffRemove() end),
+    registerAnonymousEventHandler("gmcp.Char.Afflictions.List", function() M.onAffList() end),
+    registerAnonymousEventHandler("gmcp.Char.Name", function() M.onLogin() end),
   }
   return true
 end
@@ -455,7 +502,7 @@ M.load()
 M.start()
 
 -- Generated by build.py from its ALIASES table. Do not edit here.
-AchaeaHidden.BUILD = "048c9a8b"
+AchaeaHidden.BUILD = "13d85357"
 AchaeaHidden.COMMANDS = {
     { usage = "hidden", help = "whether it is on, what it sends, and this list" },
     { usage = "hidden on|off", help = "act on the venom line at all" },
