@@ -28,14 +28,16 @@ working. The two do not conflict.
 
 One hidden affliction can be told without a diagnose. Recklessness shows you
 full health and mana whatever you really have, and every bite on record costs
-health, so a bite that leaves GMCP Char.Vitals reading hp == maxhp and
-mp == maxmp is almost surely it. Then it also sends `curing predict
+health, so a bite whose prompt reads hp == maxhp and mp == maxmp in GMCP
+Char.Vitals is almost surely it. Then it also sends `curing predict
 recklessness` (HELP 13.7.8), so server-side curing eats the lobelia without
-waiting to be told. The vitals are read on the line itself: Mudlet handles a
-GMCP frame the moment it arrives but holds the text until the prompt's GA, so
-by the time a trigger sees the line, the frame in hand is the prompt after the
-bite. Bleeding costs health too, so `You bleed <n> health.` with n over 50 is
-checked the same way; that is where Orion runs its own check.
+waiting to be told. Bleeding costs health too, so `You bleed <n> health.` with
+n over 50 is checked the same way; that is where Orion runs its own check.
+
+The vitals are read at the prompt that follows, from a one-shot prompt
+trigger, not on the line: a line can reach the triggers before its prompt's
+GMCP frame has arrived. It is predicted once, and not again until GMCP says
+recklessness was cured or a prompt shows the vitals below full.
 
 Seen working against a hunting script that clears and refills the `eb` queue
 on nearly every prompt: the diagnose waits in the balance queue, which that
@@ -90,6 +92,9 @@ M.state = M.state or {
   sent     = 0,     -- times it was acted on
   last     = nil,   -- when it was last acted on, M.now()
   predicted = 0,    -- times recklessness was predicted
+  prompt   = nil,   -- the pending one-shot prompt trigger's id
+  watching = nil,   -- "bite" or "bleed": what that prompt is checked for
+  known    = false, -- recklessness predicted or reported, and not yet cured
   loaded   = "none",
 }
 local S = M.state
@@ -199,7 +204,7 @@ M.RECKLESS = "curing predict recklessness"
 -- A bleed has to be worth more than this to be checked. Orion's threshold,
 -- kept: a small tick and a regeneration tick in the same prompt could cancel
 -- and leave a prompt full for an honest reason. Eleven ticks are on record,
--- 7 to 60, and every one took exactly its amount off its prompt.
+-- 7 to 60, and the ten with a prompt after them each took exactly its amount.
 M.BLEED_MIN = 50
 
 --- Whether a Char.Vitals table reads full health and full mana. Achaea sends
@@ -214,15 +219,71 @@ function M.fullVitals(v)
   return hp == maxhp and mp == maxmp
 end
 
---- Whether the vitals in hand say recklessness, with the switches on. Called
---- from a trigger, where the frame in hand is already this prompt's: cTelnet
---- raises a GMCP event as soon as it reads the subnegotiation, and passes the
---- text to the trigger engine only at the GA that ends the prompt (both at
---- Mudlet-4.22.0 and 5.0.1). Orion's own echoes from GMCP handlers print
---- above the lines they arrived with, which is the same ordering seen live.
-function M.reckless()
-  if not (M.config.enabled and M.config.reckless) then return false end
-  return M.fullVitals(gmcp and gmcp.Char and gmcp.Char.Vitals)
+local function on() return M.config.enabled and M.config.reckless end
+
+--- Ask for the vitals at the next prompt. Not read here: Mudlet raises a GMCP
+--- event as soon as it reads the frame, but text reaches the triggers either
+--- at the GA that ends the prompt or, when a network read ends mid-prompt,
+--- at the end of that read (cTelnet::gotRest once GA has been seen, at both
+--- Mudlet-4.22.0 and 5.0.1). In the second case the frame in hand on the line
+--- is the prompt *before* the bite, which is usually full. By the prompt line
+--- the frame has always arrived: Achaea sends it ahead of the prompt text.
+--- One prompt trigger covers a bite and a bleed in the same prompt.
+function M.watch(by)
+  if not on() then return false end
+  if S.watching ~= "bite" then S.watching = by end
+  if not S.prompt then
+    S.prompt = tempPromptTrigger(function() M.onPrompt() end, 1)
+  end
+  return true
+end
+
+--- The prompt after a bite or a bleed. Expires after one firing.
+function M.onPrompt()
+  local by = S.watching
+  S.prompt, S.watching = nil, nil
+  if not by or not on() or S.known then return false end
+  if not M.fullVitals(gmcp and gmcp.Char and gmcp.Char.Vitals) then return false end
+  S.known = true
+  S.predicted = (S.predicted or 0) + 1
+  -- Inside a trigger, on the prompt line: the same newline rule as the
+  -- venom line's alert.
+  cecho("\n<orange>[AchaeaHidden]<reset> full health and mana after " ..
+        (by == "bleed" and "bleeding" or "the bite") .. ": " .. M.RECKLESS)
+  send(M.RECKLESS)
+  return true
+end
+
+--- Whether a GMCP affliction frame names recklessness. Remove arrives as a
+--- list of names (Orion iterates it that way, and printed "Cured Aff:
+--- recklessness" off one while it was hidden); Add as one { name = ... }.
+--- Either shape is taken for either, as Room.RemovePlayer taught.
+local function names(frame, aff)
+  if type(frame) == "string" then return frame == aff end
+  if type(frame) ~= "table" then return false end
+  if frame.name == aff then return true end
+  for _, entry in pairs(frame) do
+    if entry == aff or (type(entry) == "table" and entry.name == aff) then return true end
+  end
+  return false
+end
+
+--- Pinned vitals cannot read below full, so a frame that does says the
+--- recklessness predicted earlier is gone.
+function M.onVitals()
+  if S.known and not M.fullVitals(gmcp and gmcp.Char and gmcp.Char.Vitals) then
+    S.known = false
+  end
+end
+
+function M.onAffAdd()
+  local a = gmcp and gmcp.Char and gmcp.Char.Afflictions
+  if a and names(a.Add, "recklessness") then S.known = true end
+end
+
+function M.onAffRemove()
+  local a = gmcp and gmcp.Char and gmcp.Char.Afflictions
+  if a and names(a.Remove, "recklessness") then S.known = false end
 end
 
 --- Safe on any line: anything but the venom line does nothing.
@@ -230,25 +291,16 @@ function M.onLine(text)
   if type(text) ~= "string" or text:sub(1, #M.LINE) ~= M.LINE then return false end
   S.seen = S.seen + 1
   if not M.config.enabled then return false end
+  -- Watched on every line, inside the gap too: of two bites in one breath,
+  -- the second may be the one that brought recklessness.
+  M.watch("bite")
+  -- Two bites in one breath want one diagnose, not two fighting over the queue.
   local now = M.now()
-  local out = {}
-  -- Two bites in one breath want one diagnose, not two fighting over the
-  -- queue. The recklessness check is not held back by that: the second bite
-  -- may be the one that brought it.
-  if not (S.last and now - S.last < (tonumber(M.config.gap) or 0)) then
-    out = M.commands()
-    if #out > 0 then
-      S.last = now
-      S.sent = S.sent + 1
-    end
-  end
-  local diagnosing = #out > 0
-  local predict = M.reckless()
-  if predict then
-    S.predicted = (S.predicted or 0) + 1
-    out[#out + 1] = M.RECKLESS
-  end
-  if #out == 0 then return false end
+  if S.last and now - S.last < (tonumber(M.config.gap) or 0) then return false end
+  local commands = M.commands()
+  if #commands == 0 then return false end
+  S.last = now
+  S.sent = S.sent + 1
   -- A trigger's echo lands on the line that fired it, so the alert starts
   -- with a newline of its own. It ends without one, and goes out before the
   -- commands: Mudlet's echo of a sent command starts a new line by itself when
@@ -256,25 +308,17 @@ function M.onLine(text)
   -- on either side of the sends is a blank line. Sending first and echoing
   -- "\n" after was seen to print one; this order was watched live and prints
   -- none.
-  local what = diagnosing and "hidden affliction: " or "full health and mana after the bite: "
-  local said = table.concat(out, ", ")
-  if diagnosing and predict then
-    said = said .. " (full health and mana after the bite)"
-  end
-  cecho("\n<orange>[AchaeaHidden]<reset> " .. what .. said)
-  for _, cmd in ipairs(out) do send(cmd) end
-  return diagnosing
+  cecho("\n<orange>[AchaeaHidden]<reset> hidden affliction: " ..
+        table.concat(commands, ", "))
+  for _, cmd in ipairs(commands) do send(cmd) end
+  return true
 end
 
 --- The bleeding line, with the amount the trigger captured.
 function M.onBleed(amount)
   local n = tonumber(amount)
   if not (n and n > M.BLEED_MIN) then return false end
-  if not M.reckless() then return false end
-  S.predicted = (S.predicted or 0) + 1
-  cecho("\n<orange>[AchaeaHidden]<reset> full health and mana after bleeding: " .. M.RECKLESS)
-  send(M.RECKLESS)
-  return true
+  return M.watch("bleed")
 end
 
 -- ------------------------------------------------------------------- commands
@@ -348,6 +392,8 @@ function M.diag()
   echo("  bleeding:  " .. M.BLEED_PATTERN .. " (over " .. M.BLEED_MIN .. ")\n")
   echo("  gap:       " .. tostring(M.config.gap) .. "s\n")
   echo("  triggers:  " .. #S.triggers .. " (2 is right; more means a second copy)\n")
+  echo("  reckless:  " .. (S.known and "predicted or reported, not yet cured" or "not known") ..
+       (S.prompt and "; checking the next prompt" or "") .. "\n")
   echo("  settings:  " .. M.path() .. " (" .. S.loaded .. ")\n")
 end
 
@@ -360,6 +406,8 @@ M.PACKAGE = "AchaeaHidden"
 function M.stop()
   for _, id in ipairs(S.triggers) do pcall(killTrigger, id) end
   S.triggers = {}
+  if S.prompt then pcall(killTrigger, S.prompt) end
+  S.prompt, S.watching = nil, nil
   -- `or {}`: the state table outlives a recompile, so one made by a version
   -- that kept no handlers has no such key.
   for _, id in ipairs(S.handlers or {}) do pcall(killAnonymousEventHandler, id) end
@@ -389,6 +437,9 @@ function M.start()
   }
   S.handlers = {
     registerAnonymousEventHandler("sysUninstall", M.onUninstall),
+    registerAnonymousEventHandler("gmcp.Char.Vitals", function() M.onVitals() end),
+    registerAnonymousEventHandler("gmcp.Char.Afflictions.Add", function() M.onAffAdd() end),
+    registerAnonymousEventHandler("gmcp.Char.Afflictions.Remove", function() M.onAffRemove() end),
   }
   return true
 end

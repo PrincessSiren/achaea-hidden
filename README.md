@@ -91,42 +91,56 @@ and is not written over.
 ## Recklessness
 
 Recklessness makes your prompt show full health and mana, whatever you
-really have. That makes it the one hidden
-affliction you can spot without a diagnose, because a bite always costs health.
-Every bite on record took 200 to 640 health off the next prompt, except for
-the ones that left it reading exactly full.
+really have. That makes it the one hidden affliction you can spot without a
+diagnose, because a bite always costs health. Every bite on record took 230
+to 640 health off its prompt, except for the ones that left it reading
+exactly full.
 
 The clearest capture is two giant vampire spider bites in a row. The prompt
 read `H:4060|100% M:4994|100%` through both bites and through a toxic relapse.
 Then curing touched the tree, the game printed "Prudence rules your psyche
-once again.", and the very next prompt read `H:1920|47%`.
+once again.", and the very next prompt read `H:1920|47%`. Another capture
+shows the signature from a prompt that was not full: a bite took 444 health
+off `H:4039|99%`, and the prompt after it read `H:4060|100% M:4994|100%`.
 
-So on the venom line the package reads GMCP `Char.Vitals` and checks
-`hp == maxhp` and `mp == maxmp`. If both are true it also sends
+So after the venom line the package reads GMCP `Char.Vitals` at the next
+prompt and checks `hp == maxhp` and `mp == maxmp`. If both are true it sends
 `CURING PREDICT <affliction>` ("Tell the system that you think you have an
-affliction", `HELP 13.7.8`), on the same alert as the diagnose.
+affliction", `HELP 13.7.8`) on an alert line of its own.
 
-The vitals it reads are the ones printed on the prompt *below* the line, not
-the one above it. Mudlet handles a GMCP frame as soon as it arrives, but
-holds the text back until the game's end-of-prompt marker. By the time any
-trigger sees the line, the frame from that prompt is already in hand. That
-is Mudlet's telnet code at both 4.22.0 and 5.0.1, and it is why Orion's own
-GMCP echoes print above the lines they arrived with. Four bites on record
-came right after a full prompt and left 3538 to 3791 below the line, and
-none of them predicts.
+**Why at the prompt and not on the line.** Mudlet handles a GMCP frame the
+moment it arrives. Text usually waits for the game's end-of-prompt marker,
+so the frame is normally in hand by the time a trigger sees the line. But
+when a network read ends partway through a prompt, Mudlet passes the text it
+has to the triggers straight away (`cTelnet::gotRest`, at both 4.22.0 and
+5.0.1). A trigger on the bite line would then read the vitals of the prompt
+*above* the bite, which are usually full, and predict recklessness that is
+not there. Three bites on record came right after a full prompt and left
+3420 to 3791 below the line. The prompt line itself always comes after its
+frame, so the package sets up a one-shot prompt trigger on the line and
+reads the vitals there.
+
+**Once, not every prompt.** While you are reckless every prompt reads full,
+so the package predicts once and then waits. It forgets the prediction when
+GMCP reports recklessness cured (`Char.Afflictions.Remove`, which Orion
+printed as "Cured Aff: recklessness" in the capture above, while the
+affliction was hidden), or when a prompt reads below full, which pinned
+vitals cannot. If GMCP names recklessness outright (`Char.Afflictions.Add`)
+there is nothing to predict.
 
 A second bite inside the gap sends no second diagnose but is still checked,
-since it may be the one that brought recklessness. `hidden off` stops this
-along with everything else.
+since it may be the one that brought recklessness. A bite and a bleed in the
+same prompt are checked once. `hidden off` stops all of this along with
+everything else.
 
 **Bleeding is checked the same way.** `You bleed <n> health.` costs health
-just as a bite does, so when `n` is over 50 the vitals are checked on that
-line too. Eleven bleeding ticks are on record, from 7 to 60, and each took
-exactly its amount off its prompt. The threshold is the one Orion uses for
-its own check on this line. A small tick could be cancelled out by a
-regeneration tick in the same prompt, leaving the prompt full for an honest
-reason. That has not been seen, and no bleed while reckless has been
-captured either.
+just as a bite does, so when `n` is over 50 the next prompt is checked too.
+Eleven bleeding ticks are on record, from 7 to 60. Ten have a prompt after
+them, and each of those took exactly its amount off it; the eleventh is the
+last line of its capture. The threshold is the one Orion uses for its own
+check on this line. A small tick could be cancelled out by a regeneration
+tick in the same prompt, leaving the prompt full for an honest reason. That
+has not been seen, and no bleed while reckless has been captured either.
 
 Not yet verified:
 
@@ -138,9 +152,9 @@ Not yet verified:
   lobelia for an affliction you do not have. A miss needs a bite that does no
   damage, or one that lands exactly as health regenerates back to full, and
   neither has been seen.
-- **That the frame always comes with the text.** If a prompt's text were
-  split across two network reads, the second half could reach the triggers
-  before that prompt's vitals do. No capture shows that happening.
+- **That a lobelia cure also sends `Char.Afflictions.Remove`.** The tree cure
+  is captured; the herb is not. If it does not, the next prompt below full
+  still clears the prediction.
 
 ## If you run Orion
 
@@ -152,10 +166,11 @@ do not conflict.
 Orion also has a recklessness check of its own (`ori.ssc.recklessCheck`). On
 the venom line it runs only when the vitals *before* the bite were short on
 both health and mana. Mana is nearly always full while hunting, so in practice
-it never fires there. On the bleeding line it makes the same check as this
-package, so on a reckless bleed both send the same prediction.
-What the game does with a second prediction of the same affliction has not
-been seen.
+it never fires there. On the bleeding line it runs in the trigger, on the
+vitals in hand at that moment, and skips an affliction it has already
+predicted or been told about. So on a reckless bleed both packages can send
+the prediction, once each. What the game does with a second prediction of the
+same affliction has not been seen.
 
 ## What a live run shows
 
