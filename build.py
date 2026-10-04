@@ -198,6 +198,20 @@ hidden send queue add bal diagnose
 `hidden` is the full command list. What it sends is a setting, so it can be
 changed without rebuilding anything.
 
+It also predicts recklessness. Recklessness makes your prompt read full health
+and mana whatever you really have, so when the prompt after that venom line,
+or after a bleeding tick of more than 50, reads exactly full, the package
+sends
+
+```
+curing predict recklessness
+```
+
+so server-side curing can treat it without waiting for the diagnose. It sends
+this once, and again only after recklessness has been cured, a prompt has read
+below full, or you have logged in again. This is on by default; `hidden
+reckless off` turns it off.
+
 Source and licence (GPL-3.0-or-later): {SOURCE_URL}"""
 
 

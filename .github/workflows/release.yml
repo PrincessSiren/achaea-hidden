@@ -172,7 +172,7 @@ jobs:
                 title: $title,
                 url: $release,
                 color: 15115329,   # 0xE6A441, the gold in the Discord icon
-                description: "Clear the queue and diagnose when a venom hides its affliction.\n\n`mpkg install AchaeaHidden`",
+                description: "Clear the queue and diagnose when a venom hides its affliction, and predict recklessness when the prompt after it reads full.\n\n`mpkg install AchaeaHidden`",
                 fields: [
                   { name: "Package", value: ("[AchaeaHidden.mpackage](" + $download + ")") },
                   { name: "Build", value: ("`" + $build + "` -- `hidden diag` should say this; anything else is a stale install") }

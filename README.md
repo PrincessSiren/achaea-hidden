@@ -152,21 +152,26 @@ check on this line. A small tick could be cancelled out by a regeneration
 tick in the same prompt, leaving the prompt full for an honest reason. That
 has not been seen, and no bleed while reckless has been captured either.
 
+Settled by a later capture, two infested Vertani hunted on 0.3.1:
+
+- **GMCP is fooled the same way the prompt is.** The prompts in every capture
+  are Orion's custom prompt, which replaces the game's and is drawn entirely
+  from `gmcp.Char.Vitals` (its `Custom prompt` and `Vitals` scripts). So a
+  hit that printed `Health lost: 716 (physical blunt).` at `H:2177|53%`,
+  followed by a prompt reading `H:4060|100% … +1883h`, is a `Char.Vitals`
+  frame reading full.
+- **A lobelia cure sends `Char.Afflictions.Remove`.** Orion printed "Cured
+  Aff: recklessness" from that frame just before "You eat a lobelia seed." and
+  "Prudence rules your psyche once again.", and again for a `FOCUS MIND` cure.
+  It never printed "Gained Aff: recklessness", even after a diagnose had named
+  it.
+
 Not yet verified:
 
-- **That GMCP is fooled the same way the prompt is.** The captures show the
-  prompt. Orion's own recklessness check reads GMCP vitals and compares them
-  the same way, which suggests GMCP is pinned too, but that is a script
-  author's belief, not a capture.
 - **What a prediction costs when it is wrong.** Curing would presumably eat
   lobelia for an affliction you do not have. A miss needs a bite that does no
   damage, or one that lands exactly as health regenerates back to full, and
   neither has been seen.
-- **That a lobelia cure also sends `Char.Afflictions.Remove`.** The tree cure
-  is captured; the herb is not. If it does not, the next prompt below full
-  still clears the prediction. If recklessness ended with neither, and you
-  stayed at full health until you were made reckless again, that second time
-  would go unpredicted until a prompt dropped below full or you logged in.
 - **Where the alert lands.** It is printed from the prompt trigger, on the
   prompt line, starting a line of its own the way the diagnose alert does.
   The diagnose alert's layout was watched live; this one has not been.
