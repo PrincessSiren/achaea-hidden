@@ -60,7 +60,7 @@ script leaves alone, and runs when balance returns, ahead of the attack.
 AchaeaHidden = AchaeaHidden or {}
 local M = AchaeaHidden
 
-M.VERSION = "0.4.0"
+M.VERSION = "0.4.1"
 M.BUILD = M.BUILD or "source"   -- build.py replaces this
 
 -- Settings, and the only keys a saved file is allowed to bring back. Filtered
