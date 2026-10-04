@@ -45,7 +45,34 @@ function tempRegexTrigger(re, fn)
   TRIGGERS[seq] = { re = re, fn = fn }
   return seq
 end
-function killTrigger(id) TRIGGERS[id] = nil end
+-- Prompt triggers are kept apart: they come and go with each bite, and the
+-- counts below are of the two that live as long as the package does.
+local PROMPTS = {}
+function tempPromptTrigger(fn, expiry)
+  seq = seq + 1
+  PROMPTS[seq] = { fn = fn, expiry = expiry }
+  return seq
+end
+function killTrigger(id) TRIGGERS[id] = nil; PROMPTS[id] = nil end
+local TIMERS = {}
+function tempTimer(delay, fn)
+  assert(type(delay) == "number" and delay >= 0 and delay < 86400,
+         "5.0.1's tempTimer raises outside 0 to 86400")
+  seq = seq + 1
+  TIMERS[seq] = fn
+  return seq
+end
+function killTimer(id) TIMERS[id] = nil end
+local function pendingTimers()
+  local n = 0
+  for _ in pairs(TIMERS) do n = n + 1 end
+  return n
+end
+local function pendingPrompts()
+  local n = 0
+  for _ in pairs(PROMPTS) do n = n + 1 end
+  return n
+end
 local HANDLERS = {}
 function registerAnonymousEventHandler(event, fn)
   seq = seq + 1
@@ -66,13 +93,15 @@ local function liveTriggers()
   return n
 end
 
--- The constructs this pattern uses and nothing else; anything more errors
--- here instead of passing.
+-- The constructs these patterns use and nothing else; anything more errors
+-- here instead of passing. `(\d+)` is the bleed line's one capture.
 local function pcreToLua(re)
   local lua, i = {}, 1
   while i <= #re do
     local c = re:sub(i, i)
-    if c == "\\" then
+    if re:sub(i, i + 4) == "(\\d+)" then
+      lua[#lua + 1], i = "(%d+)", i + 5
+    elseif c == "\\" then
       local n = re:sub(i + 1, i + 1)
       assert(n:match("%p"), "pcreToLua: no translation for \\" .. n)
       lua[#lua + 1], i = "%" .. n, i + 2
@@ -136,8 +165,9 @@ local captured = {
   "You have recovered balance on all limbs.",
 }
 assert(M.LINE == VENOM_LINE, "the package watches for the captured line")
-assert(#M.state.triggers == 1 and liveTriggers() == 1, "one trigger")
+assert(#M.state.triggers == 2 and liveTriggers() == 2, "two triggers: the venom line, and bleeding")
 local trigger = TRIGGERS[M.state.triggers[1]]
+assert(trigger.re == M.PATTERN, "the venom line's trigger is the first")
 local pattern = pcreToLua(trigger.re)
 
 local clock = 100
@@ -243,29 +273,305 @@ assert(not ECHOED[#ECHOED]:find("ignored", 1, true), "and a send without one say
 M.COMMANDS = { { usage = "hidden", help = "this list" } }
 M.report(); M.diag()
 
+-- ---- recklessness, read at the prompt after the bite ---------------------
+-- Vitals as Achaea sends them, strings, with the numbers from the captures in
+-- the evidence corpus: 4060 health and 4994 mana at full. In the giant vampire
+-- spider capture the prompt read 4060|100% through two bites and a relapse,
+-- until "Prudence rules your psyche once again." and then 1920|47%.
+--
+-- The order the harness drives is the game's: the line, then the prompt's
+-- GMCP frame (raised as Mudlet reads it), then the prompt line, which fires
+-- the prompt triggers. A line can reach the triggers before or after its
+-- frame, depending on where a network read ended; the prompt cannot.
+local function vitals(hp, mp)
+  return { hp = tostring(hp), maxhp = "4060", mp = tostring(mp), maxmp = "4994" }
+end
+local function frame(v)
+  gmcp = gmcp or {}
+  gmcp.Char = gmcp.Char or {}
+  gmcp.Char.Vitals = v
+  raise("gmcp.Char.Vitals")
+end
+local function prompt(v)
+  if v then frame(v) end
+  local fired = 0
+  for id, p in pairs(PROMPTS) do
+    fired = fired + 1
+    if p.expiry == 1 then PROMPTS[id] = nil end
+    p.fn()
+  end
+  return fired
+end
+local function bite()
+  line = M.LINE
+  trigger.fn()
+end
+local function affs(kind, value)
+  gmcp = gmcp or {}
+  gmcp.Char = gmcp.Char or {}
+  gmcp.Char.Afflictions = { [kind] = value }
+  raise("gmcp.Char.Afflictions." .. kind)
+end
+assert(M.CONFIG_DEFAULTS.reckless == true and M.config.reckless == true,
+       "recklessness is predicted unless that is turned off")
+clock = clock + 5
+SENT, ORDER, ECHOED = {}, {}, {}
+local predicted = M.state.predicted
+
+-- Three bites on file followed a full prompt (4060 and 4994) and left 3538,
+-- 3791 and 3420. A read that ends just after the line leaves that full
+-- prompt's frame in hand when the trigger fires; the prompt has the real one.
+for _, hp in ipairs({ 3538, 3791, 3420 }) do
+  clock = clock + 5
+  frame(vitals(4060, 4994))
+  bite()
+  assert(pendingPrompts() == 1, "the line asks for one look at the next prompt")
+  assert(prompt(vitals(hp, 4994)) == 1 and pendingPrompts() == 0, "which is spent on it")
+end
+assert(#SENT == 6 and M.state.predicted == predicted,
+       "full before the bite and short after it only diagnoses")
+
+-- The unknown venom capture: 444 poison off a 4039|99% prompt, and the prompt
+-- after it read 4060|100% 4994|100%.
+clock = clock + 5
+SENT, ORDER, ECHOED = {}, {}, {}
+frame(vitals(4039, 4994))
+bite()
+assert(#SENT == 2, "the diagnose goes on the line")
+prompt(vitals(4060, 4994))
+assert(#SENT == 3 and SENT[3] == M.RECKLESS and M.RECKLESS == "curing predict recklessness",
+       "a bite that leaves the prompt full predicts recklessness")
+assert(table.concat(ORDER, " ") == "echo send send echo send",
+       "on an alert of its own, ahead of the send")
+assert(ECHOED[#ECHOED]:sub(1, 1) == "\n" and ECHOED[#ECHOED]:sub(-1) ~= "\n"
+       and ECHOED[#ECHOED]:find("after the bite: curing predict recklessness", 1, true),
+       "starting its own line, as anything a trigger prints must")
+assert(M.state.predicted == predicted + 1, "and it is counted")
+assert(M.statusLine():find("(" .. (predicted + 1) .. " so far)", 1, true))
+assert(M.state.known == true)
+
+-- Pinned: the giant spider's second bite and every prompt after it read full.
+-- Predicted once, not once a prompt.
+for _ = 1, 3 do
+  clock = clock + 5
+  bite()
+  prompt(vitals(4060, 4994))
+end
+assert(#SENT == 3 + 6, "while it is known, bites diagnose and predict nothing more")
+-- What Orion printed "Cured Aff: recklessness" from, before "Prudence rules
+-- your psyche once again.": a Remove frame, a list of names.
+affs("Remove", { "scytherus", "recklessness" })
+assert(M.state.known == false, "a cure reported over GMCP forgets it")
+clock = clock + 5
+SENT = {}
+bite()
+prompt(vitals(4060, 4994))
+assert(#SENT == 3 and SENT[3] == M.RECKLESS, "so the next full bite predicts again")
+affs("Remove", { "scytherus" })
+assert(M.state.known == true, "another affliction's cure does not")
+frame(vitals(1920, 4994))
+assert(M.state.known == false, "and a prompt below full, which pinned vitals cannot show, does")
+affs("Add", { name = "recklessness" })
+assert(M.state.known == true, "an affliction the game names needs no prediction")
+clock = clock + 5
+SENT = {}
+bite()
+prompt(vitals(4060, 4994))
+assert(#SENT == 2, "so none is sent")
+affs("Remove", { { name = "recklessness" } })
+assert(M.state.known == false, "and either frame shape is read")
+
+-- A second bite inside the gap: no second diagnose, still looked at.
+clock = clock + 5
+bite()
+clock = clock + 0.5
+SENT, ORDER = {}, {}
+local acted = M.state.sent
+bite()
+assert(M.state.sent == acted and pendingPrompts() == 1, "two lines, one look")
+prompt(vitals(4060, 4994))
+assert(#SENT == 1 and SENT[1] == M.RECKLESS, "inside the gap only the prediction goes")
+affs("Remove", { "recklessness" })
+
+-- Health full and mana short is not the signature; nor is the reverse.
+for _, v in ipairs({ vitals(4060, 4934), vitals(3925, 4994) }) do
+  clock = clock + 5
+  SENT = {}
+  bite()
+  prompt(v)
+  assert(#SENT == 2, "both have to read full")
+end
+-- Numbers rather than strings read the same; missing or empty ones read as not full.
+assert(M.fullVitals({ hp = 10, maxhp = 10, mp = 5, maxmp = 5 }) == true)
+assert(M.fullVitals({ hp = "10", maxhp = "10" }) == false)
+assert(M.fullVitals({ hp = "0", maxhp = "0", mp = "0", maxmp = "0" }) == false)
+assert(M.fullVitals(nil) == false and M.fullVitals("H:4060") == false)
+clock = clock + 5
+SENT = {}
+bite()
+gmcp = nil
+prompt()
+assert(#SENT == 2, "no gmcp table is no prediction and no error")
+SENT = {}
+prompt(vitals(4060, 4994))
+assert(#SENT == 0, "a prompt nobody asked about is just a prompt")
+
+-- The switch, and the master switch over it.
+M.setReckless(false)
+assert(SAVED.reckless == false, "the switch is saved")
+assert(M.statusLine():find("not predicted", 1, true))
+clock = clock + 5
+SENT = {}
+bite()
+assert(pendingPrompts() == 0, "off, nothing is watched")
+prompt(vitals(4060, 4994))
+assert(#SENT == 2, "the bite diagnoses and nothing is predicted")
+M.setReckless(true)
+clock = clock + 5
+bite()
+M.setReckless(false)
+SENT = {}
+prompt(vitals(4060, 4994))
+assert(#SENT == 0, "turned off between the line and the prompt, nothing goes")
+M.setReckless(true)
+M.setEnabled(false)
+clock = clock + 5
+SENT = {}
+bite()
+prompt(vitals(4060, 4994))
+assert(#SENT == 0, "and `hidden off` stops this as well")
+M.setEnabled(true)
+
+-- ---- bleeding is checked the same way -------------------------------------
+-- From the huge rat claw capture: the raw line, the bleed, and the prompt it
+-- took exactly 60 off.
+local bleedTrigger = TRIGGERS[M.state.triggers[2]]
+assert(bleedTrigger.re == M.BLEED_PATTERN)
+local bleedPattern = pcreToLua(bleedTrigger.re)
+local function bleed(text)
+  local amount = text:match(bleedPattern)
+  if not amount then return false end
+  line, matches = text, { text, amount }
+  bleedTrigger.fn()
+  return true
+end
+assert(not ("Health lost: 60 (raw)."):find(bleedPattern), "the raw line is not the bleed")
+assert(not ('Someone says, "You bleed 60 health."'):find(bleedPattern), "anchored at the start")
+assert(("You bleed 60 health.[x] (0.10)"):find(bleedPattern), "no end anchor")
+assert(not (M.LINE):find(bleedPattern) and not ("You bleed 60 health."):find(pattern),
+       "each trigger fires on its own line only")
+SENT, ORDER, ECHOED = {}, {}, {}
+assert(bleed("You bleed 60 health."))
+prompt(vitals(3599, 4994))
+assert(#SENT == 0, "a bleed the prompt shows predicts nothing")
+frame(vitals(4060, 4994))
+assert(bleed("You bleed 60 health."))
+prompt(vitals(4060, 4994))
+assert(#SENT == 1 and SENT[1] == M.RECKLESS, "a bleed over 50 that leaves the prompt full predicts")
+assert(ECHOED[#ECHOED]:find("after bleeding", 1, true), "and says it was the bleeding")
+assert(table.concat(ORDER, " ") == "echo send")
+affs("Remove", { "recklessness" })
+SENT = {}
+-- The captured ticks under the threshold: 7, 11, 22, 23, 28, 32, 42, 47.
+for _, n in ipairs({ 7, 11, 22, 23, 28, 32, 42, 47, 50 }) do
+  assert(bleed("You bleed " .. n .. " health."))
+  assert(pendingPrompts() == 0, "a bleed of " .. n .. " is not looked at")
+end
+-- A bite and a bleed in one prompt: one look, one prediction, named the bite.
+clock = clock + 5
+SENT, ECHOED = {}, {}
+bleed("You bleed 60 health.")
+bite()
+bleed("You bleed 55 health.")
+assert(pendingPrompts() == 1, "one look for the whole prompt")
+prompt(vitals(4060, 4994))
+assert(#SENT == 3 and SENT[3] == M.RECKLESS, "one prediction")
+assert(ECHOED[#ECHOED]:find("after the bite", 1, true), "named after the bite")
+affs("Remove", { "recklessness" })
+M.setReckless(false)
+SENT = {}
+bleed("You bleed 60 health.")
+prompt(vitals(4060, 4994))
+assert(#SENT == 0, "off, bleeding predicts nothing either")
+M.setReckless(true)
+M.setEnabled(false)
+bleed("You bleed 60 health.")
+prompt(vitals(4060, 4994))
+assert(#SENT == 0, "nor with the package off")
+M.setEnabled(true)
+assert(M.onBleed(nil) == false and M.onBleed("lots") == false, "safe on anything")
+assert(M.onLine("You bleed 60 health.") == false, "and the venom reader is quiet on it")
+
+-- A state table from 0.3.1 has none of the new keys.
+M.state.predicted, M.state.known, M.state.prompt, M.state.watching = nil, nil, nil, nil
+SENT = {}
+bleed("You bleed 60 health.")
+prompt(vitals(4060, 4994))
+assert(#SENT == 1 and M.state.predicted == 1, "a recompile over 0.3.1's state counts from one")
+affs("Remove", { "recklessness" })
+
+-- Stopping with a look pending takes the prompt trigger and its timer with it.
+bleed("You bleed 60 health.")
+assert(pendingPrompts() == 1 and pendingTimers() == 1, "a look comes with a timer")
+M.stop()
+assert(pendingPrompts() == 0 and pendingTimers() == 0 and M.state.prompt == nil,
+       "stop kills a pending prompt trigger and its timer")
+M.start()
+
+-- A prompt answers the look and its timer goes with it.
+bleed("You bleed 60 health.")
+prompt(vitals(3599, 4994))
+assert(pendingTimers() == 0, "an answered look leaves no timer behind")
+
+-- With GA forced off in the profile, Mudlet marks no prompt and no prompt
+-- trigger fires. The timer drops the look, so the next bite gets one, and
+-- sends nothing: the newest frame may be a later prompt healed to full.
+local expired = M.state.expired
+SENT = {}
+bleed("You bleed 60 health.")
+frame(vitals(4060, 4994))
+for id, fn in pairs(TIMERS) do TIMERS[id] = nil; fn() end
+assert(pendingPrompts() == 0 and M.state.prompt == nil and M.state.expired == expired + 1,
+       "a look no prompt answered is dropped and counted")
+assert(#SENT == 0, "and predicts nothing")
+assert(M.expire() == false, "a timer that fires late finds nothing to drop")
+bleed("You bleed 60 health.")
+assert(pendingPrompts() == 1, "so the next line can look again")
+prompt(vitals(3599, 4994))
+
+-- A List naming it is a report; one without it is not a cure.
+affs("List", { { name = "recklessness" }, { name = "scytherus" } })
+assert(M.state.known == true, "a List naming recklessness makes it known")
+affs("List", { { name = "scytherus" } })
+assert(M.state.known == true, "a List without it does not forget a prediction")
+raise("gmcp.Char.Name")
+assert(M.state.known == false, "a login starts with nothing predicted")
+M.start()
+gmcp, matches = nil, nil
+
 -- ---- a recompile leaves one trigger ---------------------------------------
 load()
-assert(liveTriggers() == 1, "recompiling must not leave a second trigger sending twice")
+assert(liveTriggers() == 2, "recompiling must not leave a second copy sending twice")
 assert(raise("sysUninstall", "SomethingElse") == 1,
        "and one uninstall handler, not one per load")
 
 -- ---- removing the package stops it ----------------------------------------
 -- Mudlet removes the aliases and the script and leaves a temp trigger alone,
 -- so without this the package goes on clearing the queue with no `hidden off`.
-assert(liveTriggers() == 1, "somebody else's package being removed changes nothing")
+assert(liveTriggers() == 2, "somebody else's package being removed changes nothing")
 do
   local src = assert(io.open(HERE .. "/build.py")):read("*a")
   assert(src:match('PACKAGE_NAME = "([^"]+)"') == M.PACKAGE,
          "the name the event is checked against is the one the package is built under")
 end
 raise("sysUninstall", M.PACKAGE)
-assert(liveTriggers() == 0, "removing this package kills the trigger")
+assert(liveTriggers() == 0, "removing this package kills both triggers")
 assert(raise("sysUninstall", M.PACKAGE) == 0, "and the handler that did it")
 -- A state table made by 0.3.0 has no handlers key; stop must not mind.
 M.state.handlers = nil
 M.stop()
 M.start()
-assert(liveTriggers() == 1, "start brings it back, as an upgrade does")
+assert(liveTriggers() == 2, "start brings them back, as an upgrade does")
 M.stop()
 assert(liveTriggers() == 0, "stop removes it")
 
