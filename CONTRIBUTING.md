@@ -70,9 +70,9 @@ comments carry the detail.
   line. The other order was seen to print one.
 - **The vitals are read at a prompt trigger, never on the venom line.**
   `cTelnet::processSocketData` handles a GMCP frame as it reads it, but text
-  reaches the triggers at the GA. That is unless a network read ends first, in
-  which case `gotRest` hands over what it has, with the previous prompt's frame
-  still in hand. A line is marked as the prompt only when the GA is read
+  reaches the triggers at the GA. The exception comes once a GA has been seen:
+  if a network read then ends partway through a prompt, `gotRest` hands over
+  what it has straight away, with the previous prompt's frame still in hand. A line is marked as the prompt only when the GA is read
   (unless the profile sets `mFORCE_GA_OFF`). The `'\n'` pushed before
   `gotPrompt` at `Mudlet-4.22.0:src/ctelnet.cpp:4864` is in
   `slot_processReplayChunk`, the replay path, so it says nothing about a live
@@ -99,14 +99,15 @@ workflow file by path, so **renaming `release.yml` revokes publishing** until
 that entry is amended.
 
 Each publish opens a pull request there, on a branch of its own, and it merges
-itself only if the review bot leaves **no feedback on its head commit**.
+itself only if the automated review leaves **no feedback on its head commit**.
 Replying to the feedback does not clear it; only a new release does. `v0.4.0`
-was held up that way because the package description still described `0.3.x`.
-So:
+never reached the registry for that reason: the review flagged that the
+package description still described `0.3.x`, and `v0.4.1` shipped with the
+description fixed. So:
 
 - **When a release changes behaviour, change `DESCRIPTION` in `build.py` with
   it.** That text becomes the package's description in the registry, and the
-  bot reads it against the code.
+  review has flagged it once for not matching the release.
 - **A stuck pull request stays open after the fix ships.** Each publish opens a
   new one, so the old one has to be closed by a maintainer there. Merging it
   would roll the package back to its version.
