@@ -90,7 +90,7 @@ jobs:
       # first: trusted-publishers.json there pins the owner, the repo *and*
       # job_workflow_ref, so until that entry is merged this step can only
       # fail, and it would fail on the one run where the release itself went
-      # fine. Set PUBLISH_TO_MUDLET to `true` once the registry PR lands.
+      # fine. The entry landed and the variable has been `true` since v0.3.0.
       #
       # Renaming this file revokes publishing, since the registry names it by
       # path.

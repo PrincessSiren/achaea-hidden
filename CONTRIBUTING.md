@@ -58,6 +58,26 @@ A green run means the logic and the packaging hold. It does **not** mean the
 diagnose runs in a fight. That has been watched in one setup, which the README
 describes; any change to what is sent or when wants watching again.
 
+## Mudlet details the code depends on
+
+Checked in Mudlet's source at `Mudlet-4.22.0` and `Mudlet-5.0.1`; the code
+comments carry the detail.
+
+- **The alert goes out before the commands and ends without a newline.** In a
+  trigger, `TConsole::printCommand` adds a newline after a command's echo, and
+  one before it only when the last line is not empty. So a `send` already ends
+  the game's line, and a newline of ours on either side of it prints a blank
+  line. The other order was seen to print one.
+- **The vitals are read at a prompt trigger, never on the venom line.**
+  `cTelnet::processSocketData` handles a GMCP frame as it reads it, but text
+  reaches the triggers at the GA. The exception comes once a GA has been seen:
+  if a network read then ends partway through a prompt, `gotRest` hands over
+  what it has straight away, with the previous prompt's frame still in hand. A line is marked as the prompt only when the GA is read
+  (unless the profile sets `mFORCE_GA_OFF`). The `'\n'` pushed before
+  `gotPrompt` at `Mudlet-4.22.0:src/ctelnet.cpp:4864` is in
+  `slot_processReplayChunk`, the replay path, so it says nothing about a live
+  connection.
+
 ## Versions
 
 `0.x`. Minor for a change in behaviour, patch for a fix to something already
@@ -72,11 +92,25 @@ Pushing a tag `v<version>` is what ships. `release.yml` runs the harness, refuse
 a tag whose number `M.VERSION` does not claim, builds the `.mpackage` from that
 tag, and attaches it to the release.
 
-Publishing to the Mudlet package repository is a further step, and it is **off
-until the registry knows this repo**: `trusted-publishers.json` there pins the
-owner, the repo and the workflow file by path, so the step can only fail until
-that entry is merged. Set a repository variable `PUBLISH_TO_MUDLET` to `true`
-once it is, and note that renaming `release.yml` afterwards revokes publishing.
+Publishing to the Mudlet package repository is a further step, gated on a
+repository variable `PUBLISH_TO_MUDLET`. It has been on since `v0.3.0`.
+`trusted-publishers.json` in that repository pins the owner, the repo and the
+workflow file by path, so **renaming `release.yml` revokes publishing** until
+that entry is amended.
+
+Each publish opens a pull request there, on a branch of its own, and it merges
+itself only if the automated review leaves **no feedback on its head commit**.
+Replying to the feedback does not clear it; only a new release does. `v0.4.0`
+never reached the registry for that reason: the review flagged that the
+package description still described `0.3.x`, and `v0.4.1` shipped with the
+description fixed. So:
+
+- **When a release changes behaviour, change `DESCRIPTION` in `build.py` with
+  it.** That text becomes the package's description in the registry, and the
+  review has flagged it once for not matching the release.
+- **A stuck pull request stays open after the fix ships.** Each publish opens a
+  new one, so the old one has to be closed by a maintainer there. Merging it
+  would roll the package back to its version.
 
 Then it announces the release in Discord, if — and only if — a `DISCORD_WEBHOOK`
 secret is set on the repository. The message carries the two things a player can

@@ -78,7 +78,9 @@ and is not written over.
 
 - **The line** was captured from a vampire spider's bite: the attack, a
   `Health lost` line, then the line above and nothing naming an affliction.
-  A huge rat's claw prints the same line, so it is not one creature's.
+  A huge rat's claw prints the same line. So do two of an infested Vertani's
+  attacks, and the puff of spores it sprays when it is hit. So the line is
+  not one creature's.
   The harness carries those lines and fires the live trigger on them. The
   pattern is anchored at the start and not at the end, because other packages
   append their own text to lines they time.
@@ -218,6 +220,15 @@ The diagnose waits in the balance queue, the hunting script's `addclear` does
 not remove it, and it runs ahead of the re-queued attack when balance returns.
 Server-side curing then cured what it named.
 
+**The `[System]` lines do not reliably say which queue an entry is in.** Above,
+the diagnose is added to the balance queue and runs as a "queued eb command".
+In all seventeen runs on record the label read *eb* when the hunting script's
+attack was queued behind the diagnose, and *balance* when the diagnose was
+alone. That is a pattern in those runs, not a rule anyone has stated. In one
+run, `QUEUE LIST` showed `balance  diagnose` one prompt before the diagnose ran
+under the *eb* label. `QUEUE LIST` is the only thing that says which queue an
+entry is in.
+
 **What it costs: about a second per bite, and once a whole attack.** The
 diagnose spends a second of equilibrium, so the attack queued behind it fails
 with "You must regain equilibrium first", is queued again by the server piece
@@ -234,7 +245,7 @@ Four forms were tried against the same hunting setup.
 | --- | --- |
 | `diagnose` | Works, three bites in three, but only because the server queues a refused command itself. With `CONFIG USEQUEUEING OFF` it would simply be refused. |
 | `queue add eb diagnose` | Does not work. The game confirms "Added DIAGNOSE to your eb queue.", then the hunting script's `addclear eqbal` clears it with its own attack: three bites, no diagnosis. |
-| `queue add bal diagnose` | Works, five bites in five. Nothing is refused first, so it should not depend on that setting; it was not tried with the setting off. This is the default. |
+| `queue add bal diagnose` | Works, five bites in five. Nothing is refused first while equilibrium is up, so then it should not depend on that setting. With equilibrium down it is refused and queued again by the server (see [Seen since](#seen-since)), which may depend on it. It was not tried with the setting off. This is the default. |
 | `queue add full diagnose` | Did not run, one bite in one, during the fight or after it. `full` also waits on not being paralysed, and paralysis turned up straight after that bite. `QUEUE LIST` afterwards still showed it queued, with health, equilibrium and balance all up. |
 
 `ADDCLEAR` removes commands "of the specified queue type" (`HELP 4.6.1`), so
@@ -245,15 +256,27 @@ both. By `HELP 4.6.1` the `free`, `freestand` and `full` queues wait on not
 being paralysed, and the last two on standing, so they wait on conditions the
 command does not need. Only `full` was tried.
 
+### Seen since
+
+Three cases not covered above were captured in one later hunt against two
+infested Vertani:
+
+- **`queue add bal diagnose` with balance already up runs at once.** "Added
+  DIAGNOSE to your balance queue." is followed straight away by "Running queued
+  balance command: DIAGNOSE".
+- **With balance up and equilibrium down, the diagnose moves to the
+  equilibrium queue.** It runs from the balance queue, is refused ("You must
+  regain equilibrium first."), and the game answers "diagnose was added to
+  your equilibrium queue.". It then ran when equilibrium returned. This is the
+  server queuing a refused command, as with the bare `diagnose` above, so it
+  may also depend on `CONFIG USEQUEUEING`. That has not been tried.
+- **A diagnose that runs while you are stunned is lost.** It ran, the game
+  answered "You are too stunned to be able to do anything.", no diagnosis
+  printed, and it was not queued again. Nothing more was diagnosed until the
+  next venom line. Being bound has not been captured.
+
 ### Not seen
 
-- `queue add bal diagnose` arriving while you **have** balance. A queued
-  command whose condition is already met has been seen to run at once for
-  `eb`, and `bal` should do the same. One hit did land on balance, but the
-  hunting script's attack ran first and spent it, so the diagnose waited for
-  balance as usual.
-- Balance returning while equilibrium is still down. The diagnose would then
-  be refused; in every bite on record equilibrium was up.
 - A hunting script that clears the balance queue too, or no hunting script.
 
 `hidden send` changes the commands without a rebuild.
