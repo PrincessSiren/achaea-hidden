@@ -20,7 +20,22 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # The whole history, so the step below can see whether the tag is on main.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # A tag can be pushed on any commit, and a release is whatever that commit
+      # holds. Only main is reviewed (every change lands there by a pull
+      # request), so a tag on a branch that never merged would ship source
+      # nobody read. The tag has to name a commit main already contains.
+      - name: Tag is on main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::$GITHUB_REF_NAME is not on main; tag the merged commit instead"
+            exit 1
+          }
+          echo "$GITHUB_REF_NAME is on main"
 
       - name: Install LuaJIT
         run: sudo apt-get update && sudo apt-get install -y luajit
