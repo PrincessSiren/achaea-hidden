@@ -88,7 +88,8 @@ bumping mid-review mints numbers for states nobody installed.
 
 ## Releasing
 
-Pushing a tag `v<version>` is what ships. `release.yml` runs the harness, refuses
+Pushing a tag `v<version>` is what ships. `release.yml` refuses a tag on a
+commit `main` does not contain, runs the harness, refuses
 a tag whose number `M.VERSION` does not claim, builds the `.mpackage` from that
 tag, and attaches it to the release.
 
